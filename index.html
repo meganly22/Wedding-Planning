@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+x<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -145,7 +145,27 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 .toast.show{opacity:1;}
 </style>
 </head>
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <body>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen" style="position:fixed;inset:0;background:#fdf8f5;z-index:300;display:flex;align-items:center;justify-content:center;">
+  <div style="background:#fff;border:1px solid #ede6de;border-radius:16px;padding:40px 36px;width:92%;max-width:400px;text-align:center;">
+    <div style="font-size:32px;margin-bottom:8px;">💍</div>
+    <h1 id="login-title" style="font-size:20px;font-weight:700;color:#8b5e52;margin-bottom:6px;">Wedding Planner</h1>
+    <p style="font-size:13px;color:#aaa;margin-bottom:28px;">Enter your password to continue</p>
+    <div style="margin-bottom:14px;">
+      <input type="password" id="login-pw" placeholder="Password"
+        style="width:100%;padding:10px 14px;border:1px solid #d8cfc6;border-radius:8px;font-size:14px;outline:none;text-align:center;letter-spacing:2px;"
+        onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div id="login-err" style="font-size:12px;color:#c0392b;margin-bottom:12px;display:none;">Incorrect password — try again.</div>
+    <button onclick="doLogin()" style="width:100%;padding:11px;background:#8b5e52;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">Enter</button>
+    <p style="font-size:11px;color:#ccc;margin-top:20px;">Shared wedding planner · Syncs in real time</p>
+  </div>
+</div>
 
 <nav>
   <h1 id="nav-title">💍 Wedding Planner</h1>
@@ -287,7 +307,17 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
       <div style="display:flex;gap:8px;"><input type="password" id="st-key" placeholder="sk-ant-..." style="flex:1;padding:8px 11px;border:1px solid #d8cfc6;border-radius:7px;font-size:13px;"><button class="btn bp" onclick="saveKey()">Save</button></div>
       <div id="st-key-ok" style="font-size:12px;margin-top:6px;color:#2d7a4f;display:none;"></div>
     </div>
-    <div style="display:flex;gap:10px;"><button class="btn bp" onclick="saveSettings()">Save settings</button><button class="btn bd" onclick="clearAll()">Clear all data</button></div>
+    <div class="scard" id="pw-settings-card">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Passwords</div>
+      <div style="font-size:12px;color:#888;margin-bottom:12px;">Change the passwords others use to access this planner. Share the viewer password with your partner, editor password with your planner.</div>
+      <div class="fr">
+        <div class="fg"><label>Editor password</label><input type="password" id="st-editor-pw" placeholder="New editor password"></div>
+        <div class="fg"><label>Viewer password</label><input type="password" id="st-viewer-pw" placeholder="New viewer password"></div>
+      </div>
+      <button class="btn bp" style="font-size:12px;padding:7px 14px;" onclick="savePasswords()">Update passwords</button>
+      <div id="pw-save-ok" style="font-size:12px;margin-top:6px;color:#2d7a4f;display:none;">✓ Passwords updated.</div>
+    </div>
+    <div style="display:flex;gap:10px;"><button class="btn bp" onclick="saveSettings()">Save settings</button><button class="btn bs" onclick="logOut()">Log out</button><button class="btn bd" onclick="clearAll()">Clear session</button></div>
   </div>
 </div>
 
@@ -443,12 +473,90 @@ const DEFAULT_CATS=[
   {name:'Honeymoon',emoji:'✈️'},{name:'Other',emoji:'📦'}
 ];
 
+// ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyBnwwIVBcPwpmkIB3mo4kBBWYb8ukGOZFo",
+  authDomain: "wedding-tracker-7e1d6.firebaseapp.com",
+  projectId: "wedding-tracker-7e1d6",
+  storageBucket: "wedding-tracker-7e1d6.firebasestorage.app",
+  messagingSenderId: "480447032198",
+  appId: "1:480447032198:web:d6f23360c804f1038d9a07"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// ── PASSWORDS (change these!) ──────────────────────────────────────────────
+// Store hashed in Firestore doc "app/config" — first run sets them if not set.
+// For initial setup the defaults below are used. Change them in the app UI.
+const DEFAULT_EDITOR_PW = 'editor2025';
+const DEFAULT_VIEWER_PW = 'viewer2025';
+
+// ── SESSION ────────────────────────────────────────────────────────────────
+let userRole = null; // 'editor' | 'viewer'
+
+function isEditor(){ return userRole === 'editor'; }
+
+async function doLogin(){
+  const pw = document.getElementById('login-pw').value.trim();
+  if (!pw) return;
+  document.getElementById('login-err').style.display = 'none';
+
+  // load passwords from Firestore (or use defaults on first run)
+  let editorPw = DEFAULT_EDITOR_PW, viewerPw = DEFAULT_VIEWER_PW;
+  try {
+    const cfgDoc = await db.collection('app').doc('config').get();
+    if (cfgDoc.exists) {
+      editorPw = cfgDoc.data().editorPw || DEFAULT_EDITOR_PW;
+      viewerPw = cfgDoc.data().viewerPw || DEFAULT_VIEWER_PW;
+    } else {
+      // first run — write defaults
+      await db.collection('app').doc('config').set({editorPw: DEFAULT_EDITOR_PW, viewerPw: DEFAULT_VIEWER_PW});
+    }
+  } catch(e) { console.warn('Could not load config:', e); }
+
+  if (pw === editorPw) { userRole = 'editor'; }
+  else if (pw === viewerPw) { userRole = 'viewer'; }
+  else {
+    document.getElementById('login-err').style.display = 'block';
+    document.getElementById('login-pw').value = '';
+    return;
+  }
+
+  localStorage.setItem('wp-role', userRole);
+  document.getElementById('login-screen').style.display = 'none';
+  applyRoleUI();
+  await loadFromFirestore();
+  setupRealtimeListeners();
+  updateTitle();
+  renderBudget(); renderChecklist(); renderContacts();
+  if (!localStorage.getItem('wp-onboarded')) {
+    document.getElementById('onboard').style.display = 'flex'; obGo(0);
+  }
+}
+
+function applyRoleUI(){
+  if (!isEditor()) {
+    // hide all edit buttons and forms for viewers
+    document.querySelectorAll(
+      '.bp, .bd, .add-pay-form, #cat-filter-bar .btn, [onclick*="openVendorModal"], [onclick*="openExtractEditor"], [onclick*="deleteVendor"], [onclick*="saveVendor"], [onclick*="openAddTaskModal"], [onclick*="resetChecklist"]'
+    ).forEach(el => el.style.display='none');
+    document.querySelectorAll('.nb').forEach(nb=>{
+      if(['ai','csvimport'].includes(nb.dataset.page)) nb.style.display='none';
+    });
+    // add viewer badge to nav
+    const badge = document.createElement('span');
+    badge.textContent = '👁 Viewer';
+    badge.style.cssText = 'font-size:11px;color:#aaa;padding:14px 8px;';
+    document.querySelector('nav').appendChild(badge);
+  }
+}
+
 // ── STATE ─────────────────────────────────────────────────────────────────────
-let settings  = JSON.parse(localStorage.getItem('wp-settings') ||'null')||{p1:'',p2:'',date:'',guests:'',location:'',budget:0,currency:'USD'};
+let settings  = {p1:'',p2:'',date:'',guests:'',location:'',budget:0,currency:'USD'};
 // vendor: {name,category,contact,email,phone,website,contractAmount,currency,notes,payments:[],contractPDF:{name,data}}
-let vendors   = JSON.parse(localStorage.getItem('wp-vendors3') ||'[]');
-let checklist = JSON.parse(localStorage.getItem('wp-checklist')||'null')||defaultChecklist();
-let customCats= JSON.parse(localStorage.getItem('wp-customcats')||'[]');
+let vendors   = [];
+let checklist = [];
+let customCats= [];
 let activeCatFilters=[];
 let eurRate=1.08;
 let _modalPayments=[];
@@ -456,13 +564,55 @@ let _pdfBase64=null;
 let _pdfName='';
 let _moveCatIdx=-1;
 let _extractedItems=[];
+let _unsubscribers = []; // Firestore listeners
 
-function persist(){
-  localStorage.setItem('wp-settings',  JSON.stringify(settings));
-  localStorage.setItem('wp-vendors3',  JSON.stringify(vendors));
-  localStorage.setItem('wp-checklist', JSON.stringify(checklist));
-  localStorage.setItem('wp-customcats',JSON.stringify(customCats));
+// ── FIRESTORE SYNC ────────────────────────────────────────────────────────────
+async function loadFromFirestore(){
+  try {
+    const [sDoc, vDoc, clDoc, ccDoc] = await Promise.all([
+      db.collection('app').doc('settings').get(),
+      db.collection('app').doc('vendors').get(),
+      db.collection('app').doc('checklist').get(),
+      db.collection('app').doc('customcats').get(),
+    ]);
+    if (sDoc.exists)  settings   = sDoc.data().value  || settings;
+    if (vDoc.exists)  vendors    = vDoc.data().value   || [];
+    if (clDoc.exists) checklist  = clDoc.data().value  || defaultChecklist();
+    else              checklist  = defaultChecklist();
+    if (ccDoc.exists) customCats = ccDoc.data().value  || [];
+  } catch(e) { console.error('Load error:', e); toast('Connection error — check console'); }
 }
+
+function setupRealtimeListeners(){
+  _unsubscribers.forEach(u=>u());
+  _unsubscribers = [
+    db.collection('app').doc('settings').onSnapshot(doc=>{
+      if(doc.exists){settings=doc.data().value||settings; updateTitle(); renderBudget();}
+    }),
+    db.collection('app').doc('vendors').onSnapshot(doc=>{
+      if(doc.exists){vendors=doc.data().value||[]; renderBudget(); renderContacts();}
+    }),
+    db.collection('app').doc('checklist').onSnapshot(doc=>{
+      if(doc.exists){checklist=doc.data().value||[]; renderChecklist();}
+    }),
+    db.collection('app').doc('customcats').onSnapshot(doc=>{
+      if(doc.exists){customCats=doc.data().value||[]; renderBudget();}
+    }),
+  ];
+}
+
+async function persist(){
+  if (!isEditor()) return; // viewers cannot write
+  try {
+    await Promise.all([
+      db.collection('app').doc('settings').set({value: settings}),
+      db.collection('app').doc('vendors').set({value: vendors}),
+      db.collection('app').doc('checklist').set({value: checklist}),
+      db.collection('app').doc('customcats').set({value: customCats}),
+    ]);
+  } catch(e) { console.error('Save error:', e); toast('Save failed — check connection'); }
+}
+
 function getKey(){return localStorage.getItem('wp-apikey')||'';}
 function allCategories(){return [...DEFAULT_CATS,...customCats.map(c=>({name:c,emoji:'🏷'}))];}
 function catEmoji(n){const c=allCategories().find(c=>c.name===n);return c?c.emoji:'📦';}
@@ -1113,6 +1263,9 @@ function loadSettings(){
   renderCustomCatList();
   const ks=document.getElementById('st-key-ok');
   if(getKey()){ks.style.display='block';ks.textContent='✓ API key saved.';}else ks.style.display='none';
+  // hide password card for viewers
+  const pwCard=document.getElementById('pw-settings-card');
+  if(pwCard) pwCard.style.display=isEditor()?'block':'none';
 }
 function saveSettings(){
   settings.p1=document.getElementById('st-p1').value.trim();
@@ -1145,7 +1298,7 @@ function renderCustomCatList(){
   if(!customCats.length){el.innerHTML='<div style="font-size:12px;color:#bbb;">No custom categories yet.</div>';return;}
   el.innerHTML=customCats.map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px solid #f5f0ec;"><span>${c}</span><button onclick="removeCustomCategory('${c}')" class="bsm bd" style="padding:2px 8px;">Remove</button></div>`).join('');
 }
-function clearAll(){if(!confirm('Clear ALL data?'))return;localStorage.clear();location.reload();}
+function clearAll(){if(!confirm('Clear ALL data? This cannot be undone.'))return;localStorage.removeItem('wp-role');localStorage.removeItem('wp-onboarded');localStorage.removeItem('wp-apikey');location.reload();}
 function updateTitle(){const names=[settings.p1,settings.p2].filter(Boolean).join(' & ');document.getElementById('nav-title').textContent='💍 '+(names||'Wedding Planner');}
 
 // ── BACKUP ────────────────────────────────────────────────────────────────────
@@ -1188,17 +1341,54 @@ function finishOnboard(){
   settings.currency=document.getElementById('ob-currency').value;
   const k=document.getElementById('ob-key').value.trim();
   if(k.startsWith('sk-ant-'))localStorage.setItem('wp-apikey',k);
-  persist();localStorage.setItem('wp-onboarded','1');
+  await persist();localStorage.setItem('wp-onboarded','1');
   document.getElementById('onboard').style.display='none';
   updateTitle();renderBudget();renderChecklist();renderContacts();
+}
+
+// ── PASSWORDS ────────────────────────────────────────────────────────────────
+async function savePasswords(){
+  if(!isEditor()){alert('Only editors can change passwords.');return;}
+  const ep=document.getElementById('st-editor-pw').value.trim();
+  const vp=document.getElementById('st-viewer-pw').value.trim();
+  if(!ep||!vp){alert('Enter both passwords.');return;}
+  if(ep===vp){alert('Editor and viewer passwords must be different.');return;}
+  try{
+    await db.collection('app').doc('config').set({editorPw:ep,viewerPw:vp});
+    document.getElementById('st-editor-pw').value='';
+    document.getElementById('st-viewer-pw').value='';
+    document.getElementById('pw-save-ok').style.display='block';
+    setTimeout(()=>document.getElementById('pw-save-ok').style.display='none',3000);
+    toast('Passwords updated!');
+  }catch(e){alert('Failed to save passwords: '+e.message);}
+}
+
+function logOut(){
+  localStorage.removeItem('wp-role');
+  location.reload();
 }
 
 // ── TOAST ─────────────────────────────────────────────────────────────────────
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
-updateTitle();renderBudget();renderChecklist();renderContacts();
-if(!localStorage.getItem('wp-onboarded')){document.getElementById('onboard').style.display='flex';obGo(0);}
+// Check for saved session role
+(function(){
+  const savedRole = localStorage.getItem('wp-role');
+  if (savedRole) {
+    userRole = savedRole;
+    document.getElementById('login-screen').style.display = 'none';
+    applyRoleUI();
+    loadFromFirestore().then(()=>{
+      setupRealtimeListeners();
+      updateTitle(); renderBudget(); renderChecklist(); renderContacts();
+      if (!localStorage.getItem('wp-onboarded')) {
+        document.getElementById('onboard').style.display='flex'; obGo(0);
+      }
+    });
+  }
+  // else: login screen stays visible, doLogin() will handle the rest
+})();
 </script>
 </body>
 </html>
