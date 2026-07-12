@@ -403,18 +403,18 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
     <div class="add-pay-form">
       <div class="apf-title">+ Add payment</div>
       <div class="fr">
-        <div class="fg"><label>Type</label><select id="p-type"><option value="paid">Paid</option><option value="scheduled">Scheduled / Due</option></select></div>
-        <div class="fg"><label>Date</label><input type="date" id="p-date"></div>
-      </div>
-      <div class="fr">
         <div class="fg"><label>Amount</label><input type="number" id="p-amount" placeholder="0.00" min="0" step="0.01"></div>
         <div class="fg"><label>Currency</label><select id="p-cur"><option value="USD">USD $</option><option value="EUR">EUR €</option></select></div>
       </div>
       <div class="fr">
-        <div class="fg"><label>Who paid / account</label><input type="text" id="p-who" placeholder="e.g. Megan / Chase Visa"></div>
+        <div class="fg"><label>Due / paid date</label><input type="date" id="p-date"></div>
         <div class="fg"><label>Method</label><select id="p-method"><option value="">—</option><option>Credit card</option><option>Debit card</option><option>Bank transfer</option><option>Wire</option><option>Cash</option><option>Check</option><option>Venmo / PayPal</option></select></div>
       </div>
-      <div class="fg"><label>Notes</label><input type="text" id="p-notes" placeholder="e.g. 30% deposit"></div>
+      <div class="fr">
+        <div class="fg"><label>Who paid / account</label><input type="text" id="p-who" placeholder="e.g. Megan / Chase Visa"></div>
+        <div class="fg"><label>Notes</label><input type="text" id="p-notes" placeholder="e.g. 30% deposit"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1a1a1a;margin:2px 0 12px;cursor:pointer;"><input type="checkbox" id="p-paid" style="width:16px;height:16px;accent-color:#8b5e52;cursor:pointer;">Mark as already paid</label>
       <button class="btn bp" style="font-size:12px;padding:7px 14px;" onclick="addPaymentToForm()">Add payment</button>
     </div>
     <input type="hidden" id="v-idx" value="-1">
@@ -757,7 +757,8 @@ function vendorStatus(v){
   const paid=vendorPaid(v),ch=toHome(v.contractAmount||0,v.currency||'USD');
   if(!ch&&!paid)return'unpaid';if(paid>=ch-0.01)return'paid';if(paid>0)return'partial';return'unpaid';
 }
-function vendorPaid(v){return(v.payments||[]).filter(p=>p.type==='paid').reduce((s,p)=>s+toHome(p.amount||0,p.currency||v.currency||'USD'),0);}
+function isPaid(p){return typeof p.paid==='boolean'?p.paid:p.type==='paid';}
+function vendorPaid(v){return(v.payments||[]).filter(isPaid).reduce((s,p)=>s+toHome(p.amount||0,p.currency||v.currency||'USD'),0);}
 
 // ── BUDGET VIEW ───────────────────────────────────────────────────────────────
 function renderBudget(){
@@ -765,7 +766,7 @@ function renderBudget(){
   vendors.forEach(v=>{
     const ch=toHome(v.contractAmount||0,v.currency||'USD'),vp=vendorPaid(v);
     committed+=ch;paid+=vp;owed+=ch-vp;
-    (v.payments||[]).filter(p=>p.type==='scheduled').forEach(p=>{
+    (v.payments||[]).filter(p=>!isPaid(p)).forEach(p=>{
       upcoming.push({vendor:v.name,date:p.date,amount:p.amount,currency:p.currency||v.currency||'USD',notes:p.notes});
     });
   });
@@ -929,16 +930,17 @@ function openVendorModal(idx){
     document.getElementById('v-amount').value=v.contractAmount||'';
     document.getElementById('v-cur').value=v.currency||'USD';
     document.getElementById('v-notes').value=v.notes||'';
-    _modalPayments=JSON.parse(JSON.stringify(v.payments||[]));
+    _modalPayments=(v.payments||[]).map(p=>({date:p.date||'',amount:p.amount||0,currency:p.currency||v.currency||'USD',who:p.who||'',method:p.method||'',notes:p.notes||'',paid:isPaid(p)}));
   } else {
     ['v-name','v-contact','v-email','v-phone','v-website','v-amount','v-notes'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('v-cur').value='USD';
   }
-  ['p-type','p-date','p-amount','p-who','p-method','p-notes'].forEach(id=>{
+  ['p-date','p-amount','p-who','p-method','p-notes'].forEach(id=>{
     const el=document.getElementById(id);
     if(el.tagName==='SELECT')el.selectedIndex=0;else el.value='';
   });
   document.getElementById('p-cur').value='USD';
+  document.getElementById('p-paid').checked=false;
   renderPaymentList();
   document.getElementById('m-vendor').classList.add('open');
 }
@@ -947,9 +949,9 @@ function renderPaymentList(){
   if(!_modalPayments.length){el.innerHTML='<div style="font-size:12px;color:#bbb;padding:6px 0 10px;">No payments yet.</div>';return;}
   el.innerHTML='<div class="pay-list">'+_modalPayments.map((p,i)=>`
     <div class="pay-list-row">
-      <div class="pli-dot ${p.type==='paid'?'':'sched'}"></div>
+      <input type="checkbox" ${p.paid?'checked':''} onclick="togglePaymentPaid(${i})" style="width:15px;height:15px;accent-color:#8b5e52;cursor:pointer;flex-shrink:0;" title="Mark paid">
       <div class="pli-main">
-        <div style="font-weight:600;font-size:13px;">${fmtC(p.amount,p.currency||'USD')} <span class="badge ${p.type==='paid'?'bpaid':'bsched'}" style="font-size:10px;">${p.type==='paid'?'Paid':'Scheduled'}</span></div>
+        <div style="font-weight:600;font-size:13px;">${fmtC(p.amount,p.currency||'USD')} <span class="badge ${p.paid?'bpaid':'bsched'}" style="font-size:10px;">${p.paid?'Paid':'Due'}</span></div>
         <div style="font-size:11px;color:#aaa;margin-top:2px;">${fmtDate(p.date)}${p.who?' · '+p.who:''}${p.method?' · '+p.method:''}${p.notes?' · '+p.notes:''}</div>
       </div>
       <button class="pli-del" onclick="removePayment(${i})">×</button>
@@ -958,11 +960,13 @@ function renderPaymentList(){
 function addPaymentToForm(){
   const amt=parseFloat(document.getElementById('p-amount').value);
   if(!amt){alert('Enter a payment amount.');return;}
-  _modalPayments.push({type:document.getElementById('p-type').value,date:document.getElementById('p-date').value,amount:amt,currency:document.getElementById('p-cur').value,who:document.getElementById('p-who').value.trim(),method:document.getElementById('p-method').value,notes:document.getElementById('p-notes').value.trim()});
+  _modalPayments.push({paid:document.getElementById('p-paid').checked,date:document.getElementById('p-date').value,amount:amt,currency:document.getElementById('p-cur').value,who:document.getElementById('p-who').value.trim(),method:document.getElementById('p-method').value,notes:document.getElementById('p-notes').value.trim()});
   ['p-amount','p-date','p-who','p-notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('p-method').selectedIndex=0;
+  document.getElementById('p-paid').checked=false;
   renderPaymentList();
 }
+function togglePaymentPaid(i){_modalPayments[i].paid=!_modalPayments[i].paid;renderPaymentList();}
 function removePayment(i){_modalPayments.splice(i,1);renderPaymentList();}
 function saveVendor(){
   const name=document.getElementById('v-name').value.trim();
