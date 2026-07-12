@@ -277,6 +277,7 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn bs" onclick="exportData()">⬇ Backup</button>
       <label class="btn bs" style="cursor:pointer;">⬆ Restore<input type="file" accept=".json" onchange="importData(event)" style="display:none;"></label>
+      <button class="btn bs" onclick="openCategoryModal()">+ Category</button>
       <button class="btn bp" onclick="openVendorModal()">+ Add vendor</button>
     </div>
   </div>
@@ -294,6 +295,7 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
         <button class="fchip" id="cv-table-btn" onclick="setContactView('table')">☰ Table</button>
       </div>
       <button class="btn bs" onclick="exportContactsCSV()">⬇ CSV</button>
+      <button class="btn bs" onclick="openCategoryModal()">+ Category</button>
       <button class="btn bp" onclick="openVendorModal()">+ Add vendor</button>
     </div>
   </div>
@@ -463,6 +465,16 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
     </div>
     <input type="hidden" id="v-idx" value="-1">
     <div class="mfoot"><button class="bcancel" onclick="closeModal('m-vendor')">Cancel</button><button class="btn bp" onclick="saveVendor()">Save vendor</button></div>
+  </div>
+</div>
+
+<!-- ADD CATEGORY MODAL -->
+<div class="mbg" id="m-category">
+  <div class="mbox" style="max-width:340px;">
+    <h3>Add category</h3>
+    <div class="fg"><label>Category name</label><input type="text" id="cat-input" placeholder="e.g. Cake, Rentals, Stationery"></div>
+    <div style="font-size:11px;color:#aaa;margin-top:-6px;">Appears everywhere you pick a category — add/edit vendor, move category, and the budget groups.</div>
+    <div class="mfoot"><button class="bcancel" onclick="closeModal('m-category')">Cancel</button><button class="btn bp" onclick="saveNewCategory()">Add category</button></div>
   </div>
 </div>
 
@@ -694,7 +706,7 @@ async function doLogin(){
 function applyRoleUI(){
   if (!isEditor()) {
     document.querySelectorAll(
-      '.bp, .bd, .add-pay-form, [onclick*="openVendorModal"], [onclick*="openExtractEditor"], [onclick*="deleteVendor"], [onclick*="saveVendor"], [onclick*="openAddTaskModal"], [onclick*="resetChecklist"]'
+      '.bp, .bd, .add-pay-form, [onclick*="openVendorModal"], [onclick*="openExtractEditor"], [onclick*="deleteVendor"], [onclick*="saveVendor"], [onclick*="openAddTaskModal"], [onclick*="resetChecklist"], [onclick*="openCategoryModal"]'
     ).forEach(el => el.style.display='none');
     document.querySelectorAll('.nb').forEach(nb=>{
       if(['ai','csvimport'].includes(nb.dataset.page)) nb.style.display='none';
@@ -933,6 +945,24 @@ function confirmMoveCategory(){
   if(_moveCatIdx<0)return;
   vendors[_moveCatIdx].category=document.getElementById('mc-cat').value;
   persist();closeModal('m-movecat');renderBudget();renderContacts();toast('Moved!');
+}
+
+// ── ADD CATEGORY (from Budget / Contacts) ──────────────────────────────────────
+function openCategoryModal(){
+  document.getElementById('cat-input').value='';
+  document.getElementById('m-category').classList.add('open');
+  setTimeout(()=>document.getElementById('cat-input').focus(),50);
+}
+function saveNewCategory(){
+  const val=document.getElementById('cat-input').value.trim();
+  if(!val)return;
+  if(customCats.includes(val)||DEFAULT_CATS.find(c=>c.name===val)){alert('That category already exists.');return;}
+  customCats.push(val);
+  persist();
+  closeModal('m-category');
+  renderBudget();renderContacts();
+  if(document.getElementById('page-settings').classList.contains('active'))renderCustomCatList();
+  toast('Category added!');
 }
 
 // ── CONTACTS VIEW ─────────────────────────────────────────────────────────────
