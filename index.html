@@ -870,7 +870,7 @@ function renderBudget(){
     const ch=vendorCommitted(v),vp=vendorPaid(v);
     committed+=ch;paid+=vp;owed+=ch-vp;
     (v.payments||[]).forEach((p,pi)=>{
-      if(!isPaid(p)) upcoming.push({vendor:v.name,vi,pi,date:p.date,amount:p.amount,currency:p.currency||v.currency||'USD',notes:p.notes});
+      if(!isPaid(p)) upcoming.push({vendor:v.name,category:v.category||'Other',vi,pi,date:p.date,amount:p.amount,currency:p.currency||v.currency||'USD',notes:p.notes});
     });
   });
   const budget=settings.budget||0;
@@ -992,7 +992,7 @@ function renderPayCalendar(upcoming){
     const ps=byDay[day]||[];
     cells+=`<div class="cal-cell${isToday?' today':''}${isWed?' wedding':''}">
       <div class="cal-daynum">${day}${isWed?' 💍':''}</div>
-      ${ps.slice(0,4).map(u=>`<div class="cal-task" style="cursor:pointer;" title="${esc(u.vendor)} — ${fmtC(u.amount,u.currency)}" onclick="openVendorModal(${u.vi})">${fmtC(u.amount,u.currency)}</div>`).join('')}
+      ${ps.slice(0,4).map(u=>`<div class="cal-task" style="cursor:pointer;" title="${esc(u.vendor)} — ${esc(u.category)} — ${fmtC(u.amount,u.currency)}" onclick="openVendorModal(${u.vi})">${catEmoji(u.category)} ${esc(u.category)}</div>`).join('')}
       ${ps.length>4?`<div style="font-size:10px;color:#aaa;margin-top:2px;">+${ps.length-4} more</div>`:''}
     </div>`;
   }
@@ -1213,16 +1213,20 @@ function openVendorModal(idx){
 function renderPaymentList(){
   const el=document.getElementById('v-pay-list');
   if(!_modalPayments.length){el.innerHTML='<div style="font-size:12px;color:#bbb;padding:6px 0 10px;">No payments yet.</div>';return;}
-  el.innerHTML='<div class="pay-list">'+_modalPayments.map((p,i)=>`
-    <div class="pay-list-row">
+  el.innerHTML='<div class="pay-list">'+_modalPayments.map((p,i)=>{
+    const meta=[p.who,p.method,p.notes].filter(Boolean).map(esc).join(' · ');
+    return `<div class="pay-list-row">
       <input type="checkbox" ${p.paid?'checked':''} onclick="togglePaymentPaid(${i})" style="width:15px;height:15px;accent-color:#8b5e52;cursor:pointer;flex-shrink:0;" title="Mark paid">
       <div class="pli-main">
         <div style="font-weight:600;font-size:13px;">${fmtC(p.amount,p.currency||'USD')} <span class="badge ${p.paid?'bpaid':'bsched'}" style="font-size:10px;">${p.paid?'Paid':'Due'}</span></div>
-        <div style="font-size:11px;color:#aaa;margin-top:2px;">${fmtDate(p.date)}${p.who?' · '+p.who:''}${p.method?' · '+p.method:''}${p.notes?' · '+p.notes:''}</div>
+        ${meta?`<div style="font-size:11px;color:#aaa;margin-top:2px;">${meta}</div>`:''}
       </div>
+      <input type="date" value="${p.date||''}" onchange="setModalPaymentDate(${i},this.value)" title="${p.paid?'Date paid':'Due date'}" style="font-size:11px;border:1px solid #ede6de;border-radius:5px;padding:3px 5px;color:#888;background:#fff;flex-shrink:0;">
       <button class="pli-del" onclick="removePayment(${i})">×</button>
-    </div>`).join('')+'</div>';
+    </div>`;
+  }).join('')+'</div>';
 }
+function setModalPaymentDate(i,val){if(_modalPayments[i])_modalPayments[i].date=val;}
 function addPaymentToForm(){
   const amt=parseFloat(document.getElementById('p-amount').value);
   if(!amt){alert('Enter a payment amount.');return;}
