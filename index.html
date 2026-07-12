@@ -273,8 +273,14 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
     <div class="scard"><div class="slabel">Remaining</div><div class="sval o" id="s-remain">—</div></div>
   </div>
   <div id="upcoming-wrap" style="margin-bottom:24px;display:none;">
-    <div class="rh"><h2>Upcoming payments</h2></div>
-    <div class="scard" style="padding:0;overflow:hidden;"><div id="upcoming-body"></div></div>
+    <div class="rh">
+      <h2 onclick="toggleUpcoming()" style="cursor:pointer;user-select:none;">Upcoming payments <span id="up-chevron" style="font-size:11px;color:#ccc;">▾</span></h2>
+      <div class="vtoggle" id="up-viewtoggle">
+        <button class="fchip active" id="upv-list-btn" onclick="setUpcomingView('list')">☰ List</button>
+        <button class="fchip" id="upv-cal-btn" onclick="setUpcomingView('calendar')">▦ Calendar</button>
+      </div>
+    </div>
+    <div id="upcoming-body"></div>
   </div>
   <div class="rh">
     <h2>By category</h2>
@@ -475,7 +481,7 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 </div>
 
 <!-- ADD CATEGORY MODAL -->
-<div class="mbg" id="m-category">
+<div class="mbg" id="m-category" style="z-index:150;">
   <div class="mbox" style="max-width:340px;">
     <h3>Add category</h3>
     <div class="fg"><label>Icon</label>
@@ -485,6 +491,22 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
     <div class="fg"><label>Category name</label><input type="text" id="cat-input" placeholder="e.g. Cake, Rentals"></div>
     <div style="font-size:11px;color:#aaa;margin-top:-6px;">Pick an icon and a name. Appears everywhere you choose a category — add/edit vendor, move category, and the budget groups.</div>
     <div class="mfoot"><button class="bcancel" onclick="closeModal('m-category')">Cancel</button><button class="btn bp" onclick="saveNewCategory()">Add category</button></div>
+  </div>
+</div>
+
+<!-- MARK PAYMENT PAID MODAL -->
+<div class="mbg" id="m-markpaid">
+  <div class="mbox" style="max-width:420px;">
+    <h3>Mark payment as paid</h3>
+    <div id="mp-summary" style="background:#faf7f4;border:1px solid #ede6de;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:14px;"></div>
+    <div style="font-size:12px;color:#888;margin-bottom:12px;">Confirm this payment has been made and add the details.</div>
+    <div class="fr">
+      <div class="fg"><label>Date paid</label><input type="date" id="mp-date"></div>
+      <div class="fg"><label>Method</label><select id="mp-method"><option value="">—</option><option>Credit card</option><option>Debit card</option><option>Bank transfer</option><option>Wire</option><option>Cash</option><option>Check</option><option>Venmo / PayPal</option></select></div>
+    </div>
+    <div class="fg"><label>Who paid / account</label><input type="text" id="mp-who" placeholder="e.g. Megan / Chase Visa"></div>
+    <div class="fg"><label>Notes (optional)</label><input type="text" id="mp-notes" placeholder="e.g. final balance"></div>
+    <div class="mfoot"><button class="bcancel" onclick="closeModal('m-markpaid')">Cancel</button><button class="btn bp" onclick="confirmMarkPaid()">✓ Confirm payment</button></div>
   </div>
 </div>
 
@@ -745,6 +767,11 @@ let eurRate=1.08;
 let _modalPayments=[];
 let _aiFiles=[]; // AI Import uploads: {name, kind:'pdf'|'docx', size, base64, text, status}
 let _moveCatIdx=-1;
+let _upcomingCollapsed=false;   // Budget → Upcoming payments collapse
+let _upcomingView='list';       // 'list' | 'calendar'
+let _payCalMonth=null;          // {y,m} shown in the upcoming-payments calendar
+let _markPaid=null;             // {vi,pi} payment being marked paid
+let _catReturnSelect=null;      // <select> id to re-select after adding a category inline
 let _extractedItems=[];
 let _unsubscribers = []; // Firestore listeners
 
@@ -839,11 +866,11 @@ function vendorStatus(v){
 // ── BUDGET VIEW ───────────────────────────────────────────────────────────────
 function renderBudget(){
   let committed=0,paid=0,owed=0;const upcoming=[];
-  vendors.forEach(v=>{
+  vendors.forEach((v,vi)=>{
     const ch=vendorCommitted(v),vp=vendorPaid(v);
     committed+=ch;paid+=vp;owed+=ch-vp;
-    (v.payments||[]).filter(p=>!isPaid(p)).forEach(p=>{
-      upcoming.push({vendor:v.name,date:p.date,amount:p.amount,currency:p.currency||v.currency||'USD',notes:p.notes});
+    (v.payments||[]).forEach((p,pi)=>{
+      if(!isPaid(p)) upcoming.push({vendor:v.name,vi,pi,date:p.date,amount:p.amount,currency:p.currency||v.currency||'USD',notes:p.notes});
     });
   });
   const budget=settings.budget||0;
@@ -855,15 +882,7 @@ function renderBudget(){
   document.getElementById('s-bar').style.width=(budget?Math.min(100,committed/budget*100):0).toFixed(1)+'%';
 
   upcoming.sort((a,b)=>(!a.date?1:!b.date?-1:a.date.localeCompare(b.date)));
-  const upWrap=document.getElementById('upcoming-wrap');
-  if(upcoming.length){
-    upWrap.style.display='block';
-    document.getElementById('upcoming-body').innerHTML=upcoming.map(u=>{
-      const days=daysUntil(u.date);
-      const urg=days!==null&&days<=14?'color:#c0392b;font-weight:700;':days!==null&&days<=30?'color:#d47c0f;font-weight:600;':'';
-      return`<div class="upcoming-row"><div style="flex:1;font-weight:600;">${u.vendor}</div><div style="${urg}width:160px;">${fmtDate(u.date)}${days!==null?` <span style="font-size:11px;color:#aaa;">(${days>0?days+'d':'overdue'})</span>`:''}</div><div style="width:110px;text-align:right;">${fmtC(u.amount,u.currency)}</div><div style="width:120px;text-align:right;color:#888;font-size:12px;">${u.notes||''}</div></div>`;
-    }).join('');
-  } else upWrap.style.display='none';
+  renderUpcoming(upcoming);
 
   // filter chips
   const usedCats=[...new Set(vendors.map(v=>v.category||'Other'))].sort();
@@ -924,6 +943,92 @@ function renderBudget(){
   document.getElementById('budget-cats').innerHTML=html;
 }
 
+// ── UPCOMING PAYMENTS ───────────────────────────────────────────────────────
+function toggleUpcoming(){_upcomingCollapsed=!_upcomingCollapsed;renderBudget();}
+function setUpcomingView(v){_upcomingView=v;renderBudget();}
+function renderUpcoming(upcoming){
+  const wrap=document.getElementById('upcoming-wrap'), body=document.getElementById('upcoming-body');
+  if(!upcoming.length){wrap.style.display='none';return;}
+  wrap.style.display='block';
+  document.getElementById('up-chevron').style.transform=_upcomingCollapsed?'rotate(-90deg)':'';
+  document.getElementById('up-viewtoggle').style.display=_upcomingCollapsed?'none':'flex';
+  document.getElementById('upv-list-btn').classList.toggle('active',_upcomingView==='list');
+  document.getElementById('upv-cal-btn').classList.toggle('active',_upcomingView==='calendar');
+  if(_upcomingCollapsed){body.style.display='none';return;}
+  body.style.display='block';
+  body.innerHTML=_upcomingView==='calendar'?renderPayCalendar(upcoming):renderUpcomingList(upcoming);
+}
+function renderUpcomingList(upcoming){
+  return '<div class="scard" style="padding:0;overflow:hidden;">'+upcoming.map(u=>{
+    const days=daysUntil(u.date);
+    const urg=days!==null&&days<=14?'color:#c0392b;font-weight:700;':days!==null&&days<=30?'color:#d47c0f;font-weight:600;':'';
+    const dueTxt=`${fmtDate(u.date)}${days!==null?` <span style="font-size:11px;color:#aaa;">(${days>0?days+'d':'overdue'})</span>`:''}`;
+    return `<div class="upcoming-row">
+      <input type="checkbox" onclick="event.stopPropagation();this.checked=false;openMarkPaid(${u.vi},${u.pi})" title="Mark as paid" style="width:15px;height:15px;accent-color:#8b5e52;cursor:pointer;flex-shrink:0;">
+      <div style="flex:1;font-weight:600;cursor:pointer;" onclick="openVendorModal(${u.vi})">${esc(u.vendor)}</div>
+      <div style="${urg}width:150px;cursor:pointer;" onclick="openVendorModal(${u.vi})">${dueTxt}</div>
+      <div style="width:100px;text-align:right;cursor:pointer;" onclick="openVendorModal(${u.vi})">${fmtC(u.amount,u.currency)}</div>
+      <div style="width:120px;text-align:right;color:#888;font-size:12px;">${esc(u.notes||'')}</div>
+    </div>`;
+  }).join('')+'</div>';
+}
+function renderPayCalendar(upcoming){
+  if(!_payCalMonth){
+    const dated=upcoming.filter(u=>u.date).map(u=>new Date(u.date+'T12:00:00')).sort((a,b)=>a-b);
+    const base=dated[0]||(settings.date?new Date(settings.date+'T12:00:00'):new Date());
+    _payCalMonth={y:base.getFullYear(),m:base.getMonth()};
+  }
+  const {y,m}=_payCalMonth;
+  const first=new Date(y,m,1),startDow=first.getDay(),daysInMonth=new Date(y,m+1,0).getDate();
+  const byDay={};
+  upcoming.forEach(u=>{if(!u.date)return;const d=new Date(u.date+'T12:00:00');if(d.getFullYear()===y&&d.getMonth()===m)(byDay[d.getDate()]=byDay[d.getDate()]||[]).push(u);});
+  const today=new Date(),wed=settings.date?new Date(settings.date+'T12:00:00'):null;
+  const dows=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let cells='';
+  for(let i=0;i<startDow;i++)cells+='<div class="cal-cell empty"></div>';
+  for(let day=1;day<=daysInMonth;day++){
+    const isToday=today.getFullYear()===y&&today.getMonth()===m&&today.getDate()===day;
+    const isWed=wed&&wed.getFullYear()===y&&wed.getMonth()===m&&wed.getDate()===day;
+    const ps=byDay[day]||[];
+    cells+=`<div class="cal-cell${isToday?' today':''}${isWed?' wedding':''}">
+      <div class="cal-daynum">${day}${isWed?' 💍':''}</div>
+      ${ps.slice(0,4).map(u=>`<div class="cal-task" style="cursor:pointer;" title="${esc(u.vendor)} — ${fmtC(u.amount,u.currency)}" onclick="openVendorModal(${u.vi})">${fmtC(u.amount,u.currency)}</div>`).join('')}
+      ${ps.length>4?`<div style="font-size:10px;color:#aaa;margin-top:2px;">+${ps.length-4} more</div>`:''}
+    </div>`;
+  }
+  const undated=upcoming.filter(u=>!u.date);
+  return `<div class="cal-head">
+      <button class="btn bs bsm" onclick="payCalNav(-1)">←</button>
+      <div style="font-size:14px;font-weight:700;">${first.toLocaleDateString('en-US',{month:'long',year:'numeric'})}</div>
+      <button class="btn bs bsm" onclick="payCalNav(1)">→</button>
+    </div>
+    <div class="cal-grid">${dows.map(d=>`<div class="cal-dow">${d}</div>`).join('')}${cells}</div>
+    ${undated.length?`<div style="font-size:12px;color:#d47c0f;margin-top:10px;">${undated.length} payment${undated.length!==1?'s':''} with no date — add a date in the vendor to place ${undated.length!==1?'them':'it'} on the calendar.</div>`:''}`;
+}
+function payCalNav(delta){if(!_payCalMonth)return;let{y,m}=_payCalMonth;m+=delta;if(m<0){m=11;y--;}else if(m>11){m=0;y++;}_payCalMonth={y,m};renderBudget();}
+function openMarkPaid(vi,pi){
+  const v=vendors[vi];if(!v)return;const p=(v.payments||[])[pi];if(!p)return;
+  _markPaid={vi,pi};
+  document.getElementById('mp-summary').innerHTML=`<strong>${esc(v.name)}</strong> — ${fmtC(p.amount,p.currency||v.currency||'USD')}${p.notes?` · ${esc(p.notes)}`:''}`;
+  document.getElementById('mp-date').value=p.date||new Date().toISOString().slice(0,10);
+  document.getElementById('mp-method').value=p.method||'';
+  document.getElementById('mp-who').value=p.who||'';
+  document.getElementById('mp-notes').value=p.notes||'';
+  document.getElementById('m-markpaid').classList.add('open');
+}
+function confirmMarkPaid(){
+  if(!_markPaid)return;
+  const {vi,pi}=_markPaid;const p=vendors[vi]&&vendors[vi].payments[pi];
+  if(!p){closeModal('m-markpaid');return;}
+  p.paid=true;
+  p.date=document.getElementById('mp-date').value||p.date||'';
+  p.method=document.getElementById('mp-method').value;
+  p.who=document.getElementById('mp-who').value.trim();
+  p.notes=document.getElementById('mp-notes').value.trim();
+  _markPaid=null;
+  persist();closeModal('m-markpaid');renderBudget();renderContacts();toast('Payment marked paid!');
+}
+
 function toggleCatGroup(head){
   const body=head.closest('.cat-group').querySelector('.cat-body');
   const toggle=head.querySelector('.cat-toggle');
@@ -951,7 +1056,7 @@ function viewContract(idx){
 function openMoveCategory(idx){
   _moveCatIdx=idx;
   document.getElementById('mc-name').textContent=vendors[idx].name;
-  document.getElementById('mc-cat').innerHTML=allCategories().map(c=>`<option value="${c.name}" ${vendors[idx].category===c.name?'selected':''}>${c.emoji} ${c.name}</option>`).join('');
+  populateCatSelect('mc-cat',vendors[idx].category||'Other');
   document.getElementById('m-movecat').classList.add('open');
 }
 function confirmMoveCategory(){
@@ -971,7 +1076,8 @@ function pickEmoji(inputId,emoji,btn){
   btn.parentElement.querySelectorAll('.emoji-opt').forEach(b=>b.classList.remove('sel'));
   btn.classList.add('sel');
 }
-function openCategoryModal(){
+function openCategoryModal(returnSelectId){
+  _catReturnSelect=(typeof returnSelectId==='string')?returnSelectId:null;
   document.getElementById('cat-input').value='';
   document.getElementById('cat-emoji').value='🏷';
   renderEmojiPicker('cat-emoji-picker','cat-emoji');
@@ -988,7 +1094,8 @@ function saveNewCategory(){
   closeModal('m-category');
   renderBudget();renderContacts();
   if(document.getElementById('page-settings').classList.contains('active'))renderCustomCatList();
-  toast(`Category "${name}" added — pick it when adding or editing a vendor.`);
+  if(_catReturnSelect){populateCatSelect(_catReturnSelect,name);_catReturnSelect=null;toast(`Category "${name}" added and selected.`);}
+  else toast(`Category "${name}" added — pick it when adding or editing a vendor.`);
 }
 
 // ── CONTACTS VIEW ─────────────────────────────────────────────────────────────
@@ -1063,7 +1170,16 @@ function deleteVendor(i){if(!confirm('Delete this vendor?'))return;vendors.splic
 
 // ── VENDOR MODAL ──────────────────────────────────────────────────────────────
 function populateCatSelect(id,current){
-  document.getElementById(id).innerHTML=allCategories().map(c=>`<option value="${c.name}"${current===c.name?' selected':''}>${c.emoji} ${c.name}</option>`).join('');
+  const el=document.getElementById(id);
+  el.innerHTML=allCategories().map(c=>`<option value="${c.name}"${current===c.name?' selected':''}>${c.emoji} ${c.name}</option>`).join('')
+    +`<option value="__new__">＋ Add new category…</option>`;
+  if(current)el.value=current;
+  el.dataset.prev=el.value;
+  el.onchange=function(){catSelectChange(this);};
+}
+function catSelectChange(sel){
+  if(sel.value==='__new__'){ sel.value=sel.dataset.prev||''; openCategoryModal(sel.id); }
+  else { sel.dataset.prev=sel.value; }
 }
 function openVendorModal(idx){
   _modalPayments=[];
