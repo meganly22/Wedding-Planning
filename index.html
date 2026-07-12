@@ -1304,7 +1304,8 @@ async function runExtract(){
 
   const multi = ready.length>1 || (ready.length>=1 && !!text);
   const sys=`You are a wedding expense extractor. Extract ALL vendor/expense items from the input (pasted text, PDF contracts, and Word documents). Return ONLY a raw JSON array starting with [.
-Each object: {"name":"descriptive name","category":"Venue|Catering|Photography|Flowers|Music / DJ|Attire|Hair & Makeup|Invitations|Transport|Honeymoon|Other","contact":"contact person name or empty","email":"email or empty","phone":"phone or empty","currency":"USD or EUR","contractAmount":number,"paid":number,"status":"paid|partial|unpaid","scheduledPayments":[{"date":"YYYY-MM-DD or empty","amount":number,"notes":"e.g. final balance"}],"notes":"context","sourceFile":"the document filename this item came from, or empty for pasted text"}
+Each object: {"name":"descriptive name","category":"Venue|Catering|Photography|Flowers|Music / DJ|Attire|Hair & Makeup|Invitations|Transport|Honeymoon|Other","contact":"contact person name or empty","email":"email or empty","phone":"phone or empty","currency":"USD or EUR","contractAmount":number,"notes":"context","sourceFile":"the document filename this item came from, or empty for pasted text","payments":[{"date":"YYYY-MM-DD or empty","amount":number,"paid":true if this installment has ALREADY been paid else false,"notes":"e.g. deposit, final balance"}]}
+List each payment installment exactly ONCE in "payments": set "paid":true for amounts already paid and "paid":false for remaining/upcoming amounts. Never list the same payment twice (e.g. do NOT repeat a paid deposit as an unpaid item). contractAmount is the total contract value.
 For raw spreadsheet rows (no delimiters), pattern is: Date ItemName Price Currency Notes. Skip header rows.`;
 
   try{
@@ -1338,6 +1339,15 @@ For raw spreadsheet rows (no delimiters), pattern is: Date ItemName Price Curren
   }
 }
 
+function exPaidTotal(d){return (d.payments||[]).reduce((s,p)=>s+(p.paid?(p.amount||0):0),0);}
+function exStatus(d){
+  const paid=exPaidTotal(d), ch=d.contractAmount||0;
+  if(!ch&&!paid)return'unpaid';
+  if(ch&&paid>=ch-0.01)return'paid';
+  if(!ch&&paid>0)return'paid';
+  if(paid>0)return'partial';
+  return'unpaid';
+}
 function renderExtractedList(items){
   const bmap={paid:'bpaid',partial:'bpart',unpaid:'bunp'};
   const hdr=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -1345,13 +1355,13 @@ function renderExtractedList(items){
     <button class="btn bp" onclick="saveAllExtracted()" style="font-size:12px;padding:7px 14px;">Save all as vendors</button>
   </div>`;
   const cards=items.map((d,i)=>{
-    const bal=(d.contractAmount||0)-(d.paid||0);
-    const c=d.currency==='EUR'?'€':'$';
-    const schedHtml=(d.scheduledPayments||[]).length
-      ?`<div class="airow"><span class="airk">Scheduled</span><span class="airv" style="color:#1a73e8;font-weight:400;font-size:12px;">${(d.scheduledPayments||[]).map(p=>`${fmtC(p.amount,d.currency||'USD')}${p.date?' on '+fmtDate(p.date):''}${p.notes?' ('+p.notes+')':''}`).join('<br>')}</span></div>`:'';
+    const paid=exPaidTotal(d), ch=d.contractAmount||0, bal=ch-paid, st=exStatus(d), c=d.currency==='EUR'?'€':'$';
+    const upcoming=(d.payments||[]).filter(p=>!p.paid);
+    const schedHtml=upcoming.length
+      ?`<div style="margin-top:8px;font-size:12px;color:#1a73e8;">📅 ${upcoming.map(p=>`${fmtC(p.amount,d.currency||'USD')}${p.date?' due '+fmtDate(p.date):''}${p.notes?' — '+esc(p.notes):''}`).join(' · ')}</div>`:'';
     return`<div class="extract-editor" id="ei-${i}">
       <div class="ee-header">
-        <span class="ee-header-title">${d.name||'Item '+(i+1)} <span class="badge ${bmap[d.status]||'bunp'}">${d.status||'unpaid'}</span></span>
+        <span class="ee-header-title">${esc(d.name||'Item '+(i+1))} <span class="badge ${bmap[st]||'bunp'}">${st}</span></span>
         <div style="display:flex;gap:6px;" id="ei-btns-${i}">
           <button class="bsm bs" onclick="openExtractEditor(${i})">✏ Edit & save</button>
           <button class="bsm bg2" onclick="quickSaveExtracted(${i})">+ Save as-is</button>
@@ -1359,16 +1369,16 @@ function renderExtractedList(items){
       </div>
       <div style="padding:12px 14px;">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:6px 16px;font-size:12px;">
-          <div><span style="color:#aaa;">Contract</span> <strong>${c}${Number(d.contractAmount||0).toFixed(2)}</strong></div>
-          <div><span style="color:#aaa;">Paid</span> <strong style="color:#2d7a4f;">${c}${Number(d.paid||0).toFixed(2)}</strong></div>
-          <div><span style="color:#aaa;">Balance</span> <strong style="color:${bal>0?'#c0392b':'#2d7a4f'};">${c}${Number(bal).toFixed(2)}</strong></div>
-          <div><span style="color:#aaa;">Category</span> <strong>${d.category||'Other'}</strong></div>
-          ${d.contact?`<div><span style="color:#aaa;">Contact</span> <strong>${d.contact}</strong></div>`:''}
-          ${d.email?`<div><span style="color:#aaa;">Email</span> <strong>${d.email}</strong></div>`:''}
-          ${d.phone?`<div><span style="color:#aaa;">Phone</span> <strong>${d.phone}</strong></div>`:''}
+          <div><span style="color:#aaa;">Contract</span> <strong>${c}${Number(ch).toFixed(2)}</strong></div>
+          <div><span style="color:#aaa;">Paid</span> <strong style="color:#2d7a4f;">${c}${Number(paid).toFixed(2)}</strong></div>
+          <div><span style="color:#aaa;">Balance</span> <strong style="color:${bal>0.01?'#c0392b':'#2d7a4f'};">${c}${Number(bal).toFixed(2)}</strong></div>
+          <div><span style="color:#aaa;">Category</span> <strong>${esc(d.category||'Other')}</strong></div>
+          ${d.contact?`<div><span style="color:#aaa;">Contact</span> <strong>${esc(d.contact)}</strong></div>`:''}
+          ${d.email?`<div><span style="color:#aaa;">Email</span> <strong>${esc(d.email)}</strong></div>`:''}
+          ${d.phone?`<div><span style="color:#aaa;">Phone</span> <strong>${esc(d.phone)}</strong></div>`:''}
         </div>
-        ${schedHtml?`<div style="margin-top:8px;font-size:12px;color:#1a73e8;">📅 ${(d.scheduledPayments||[]).map(p=>`${fmtC(p.amount,d.currency||'USD')}${p.date?' due '+fmtDate(p.date):''}${p.notes?' — '+p.notes:''}`).join(' · ')}</div>`:''}
-        ${d.notes?`<div style="margin-top:6px;font-size:11px;color:#aaa;">${d.notes}</div>`:''}
+        ${schedHtml}
+        ${d.notes?`<div style="margin-top:6px;font-size:11px;color:#aaa;">${esc(d.notes)}</div>`:''}
       </div>
     </div>`;
   }).join('');
@@ -1409,15 +1419,13 @@ function openExtractEditor(i){
   document.getElementById('ex-notes').value=d.notes||'';
 
   // build editable payment rows
-  _exPayments = [];
-  if((d.paid||0)>0) _exPayments.push({type:'paid', amount:d.paid, currency:d.currency||'USD', date:'', who:'', method:'', notes:'initial payment'});
-  (d.scheduledPayments||[]).forEach(p=>{
-    // try to resolve relative dates using wedding date
-    let date = p.date||''
-    if (!date && p.notes && settings.date) {
-      date = resolveRelativeDate(p.notes, settings.date);
+  _exPayments = (d.payments||[]).map(p=>{
+    // try to resolve relative dates using wedding date (for unpaid/upcoming rows)
+    let date = p.date||'';
+    if (!p.paid && !date && p.notes && settings.date) {
+      date = resolveRelativeDate(p.notes, settings.date) || '';
     }
-    _exPayments.push({type:'scheduled', amount:p.amount||0, currency:d.currency||'USD', date, who:'', method:'', notes:p.notes||''});
+    return {type:p.paid?'paid':'scheduled', amount:p.amount||0, currency:d.currency||'USD', date, who:'', method:'', notes:p.notes||''};
   });
 
   const hint = document.getElementById('ex-date-hint');
@@ -1541,9 +1549,7 @@ function saveAllExtracted(){
 }
 
 function aiToVendor(d,contractPDF){
-  const payments=[];
-  if((d.paid||0)>0)payments.push({type:'paid',date:'',amount:d.paid||0,currency:d.currency||'USD',who:'',method:'',notes:'initial payment'});
-  (d.scheduledPayments||[]).forEach(p=>payments.push({type:'scheduled',date:p.date||'',amount:p.amount||0,currency:d.currency||'USD',who:'',method:'',notes:p.notes||''}));
+  const payments=(d.payments||[]).map(p=>({paid:!!p.paid,date:p.date||'',amount:p.amount||0,currency:d.currency||'USD',who:'',method:'',notes:p.notes||''}));
   return{name:d.name||'',category:d.category||'Other',contact:d.contact||'',email:d.email||'',phone:d.phone||'',website:'',contractAmount:d.contractAmount||0,currency:d.currency||'USD',notes:d.notes||'',payments,contractPDF:contractPDF||null};
 }
 
