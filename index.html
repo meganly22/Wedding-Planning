@@ -769,18 +769,21 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.mbg').forEach(bg=>bg.addEventListener('click',e=>{if(e.target===bg)bg.classList.remove('open');}));
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-function vendorStatus(v){
-  const paid=vendorPaid(v),ch=toHome(v.contractAmount||0,v.currency||'USD');
-  if(!ch&&!paid)return'unpaid';if(paid>=ch-0.01)return'paid';if(paid>0)return'partial';return'unpaid';
-}
 function isPaid(p){return typeof p.paid==='boolean'?p.paid:p.type==='paid';}
 function vendorPaid(v){return(v.payments||[]).filter(isPaid).reduce((s,p)=>s+toHome(p.amount||0,p.currency||v.currency||'USD'),0);}
+function vendorPayTotal(v){return(v.payments||[]).reduce((s,p)=>s+toHome(p.amount||0,p.currency||v.currency||'USD'),0);}
+// "Committed" = the contract total, or the payment-schedule total when the contract total is blank/under-set
+function vendorCommitted(v){return Math.max(toHome(v.contractAmount||0,v.currency||'USD'),vendorPayTotal(v));}
+function vendorStatus(v){
+  const paid=vendorPaid(v),ch=vendorCommitted(v);
+  if(!ch&&!paid)return'unpaid';if(paid>=ch-0.01)return'paid';if(paid>0)return'partial';return'unpaid';
+}
 
 // ── BUDGET VIEW ───────────────────────────────────────────────────────────────
 function renderBudget(){
   let committed=0,paid=0,owed=0;const upcoming=[];
   vendors.forEach(v=>{
-    const ch=toHome(v.contractAmount||0,v.currency||'USD'),vp=vendorPaid(v);
+    const ch=vendorCommitted(v),vp=vendorPaid(v);
     committed+=ch;paid+=vp;owed+=ch-vp;
     (v.payments||[]).filter(p=>!isPaid(p)).forEach(p=>{
       upcoming.push({vendor:v.name,date:p.date,amount:p.amount,currency:p.currency||v.currency||'USD',notes:p.notes});
@@ -820,7 +823,7 @@ function renderBudget(){
   cats.forEach(cat=>{
     const cv=filteredV.filter(v=>(v.category||'Other')===cat);
     if(!cv.length)return;
-    const cc=cv.reduce((s,v)=>s+toHome(v.contractAmount||0,v.currency||'USD'),0);
+    const cc=cv.reduce((s,v)=>s+vendorCommitted(v),0);
     const cp=cv.reduce((s,v)=>s+vendorPaid(v),0);
     html+=`<div class="cat-group">
       <div class="cat-head" onclick="toggleCatGroup(this)">
@@ -843,11 +846,11 @@ function renderBudget(){
       </div>
       <div class="cat-body">`;
     cv.forEach(v=>{
-      const ri=vendors.indexOf(v),vp=vendorPaid(v),ch=toHome(v.contractAmount||0,v.currency||'USD'),bal=ch-vp,st=vendorStatus(v);
+      const ri=vendors.indexOf(v),vp=vendorPaid(v),ch=vendorCommitted(v),bal=ch-vp,st=vendorStatus(v);
       html+=`<div class="vrow-item">
         <div style="flex:1;"><span style="font-weight:600;">${v.name}</span>${v.contact?`<span style="display:block;font-size:11px;color:#aaa;">${v.contact}</span>`:''}
           ${v.contractPDF?`<span style="font-size:11px;color:#8b5e52;cursor:pointer;" onclick="viewContract(${ri})">📄 contract</span>`:''}</div>
-        <div style="width:110px;text-align:right;font-size:13px;">${fmtC(v.contractAmount||0,v.currency||'USD')}${v.currency!==settings.currency?`<br><span style="font-size:10px;color:#ccc;">≈${fmtH(ch)}</span>`:''}</div>
+        <div style="width:110px;text-align:right;font-size:13px;">${v.contractAmount?`${fmtC(v.contractAmount,v.currency||'USD')}${v.currency!==settings.currency?`<br><span style="font-size:10px;color:#ccc;">≈${fmtH(toHome(v.contractAmount,v.currency||'USD'))}</span>`:''}`:fmtH(ch)}</div>
         <div style="width:95px;text-align:right;color:#2d7a4f;font-weight:600;font-size:13px;">${fmtH(vp)}</div>
         <div style="width:95px;text-align:right;font-weight:600;font-size:13px;color:${bal>0.01?'#c0392b':'#2d7a4f'};">${fmtH(bal)}</div>
         <div style="width:70px;text-align:center;"><span class="badge ${bmap[st]}">${st}</span></div>
@@ -959,9 +962,9 @@ function renderContactsTable(tbl){
 function csvCell(s){s=String(s==null?'':s);return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
 function exportContactsCSV(){
   if(!vendors.length){alert('No vendors to export.');return;}
-  const headers=['name','category','contact','email','phone','website','notes'];
+  const headers=['name','category','contact','email','phone','website'];
   const lines=[headers.join(',')];
-  vendors.forEach(v=>lines.push([v.name,v.category,v.contact,v.email,v.phone,v.website,v.notes].map(csvCell).join(',')));
+  vendors.forEach(v=>lines.push([v.name,v.category,v.contact,v.email,v.phone,v.website].map(csvCell).join(',')));
   const blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=(weddingCode||'wedding')+'-contacts.csv';
