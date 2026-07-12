@@ -75,6 +75,13 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 .cc-actions{margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;}
 .contract-pill{display:inline-flex;align-items:center;gap:5px;background:#fdf0eb;border:1px solid #f0ddd5;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;color:#8b5e52;cursor:pointer;margin-top:8px;}
 .contract-pill:hover{background:#f5e0d5;}
+.vtoggle{display:flex;gap:6px;}
+.vtable-wrap{overflow-x:auto;background:#fff;border:1px solid #ede6de;border-radius:12px;}
+.vtable{width:100%;border-collapse:collapse;font-size:13px;min-width:760px;}
+.vtable th{text-align:left;font-size:11px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;border-bottom:1px solid #ede6de;background:#faf7f4;white-space:nowrap;}
+.vtable td{padding:10px 12px;border-bottom:1px solid #f5f0ec;vertical-align:top;}
+.vtable tr:last-child td{border-bottom:none;}
+.vtable tbody tr:hover td{background:#fdf9f7;}
 
 /* modals */
 .mbg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:center;justify-content:center;}
@@ -257,9 +264,17 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 <div id="page-vendors" class="page">
   <div class="rh">
     <h2>Vendor contacts</h2>
-    <button class="btn bp" onclick="openVendorModal()">+ Add vendor</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="vtoggle">
+        <button class="fchip active" id="cv-cards-btn" onclick="setContactView('cards')">▦ Cards</button>
+        <button class="fchip" id="cv-table-btn" onclick="setContactView('table')">☰ Table</button>
+      </div>
+      <button class="btn bs" onclick="exportContactsCSV()">⬇ CSV</button>
+      <button class="btn bp" onclick="openVendorModal()">+ Add vendor</button>
+    </div>
   </div>
   <div class="contact-grid" id="contact-grid"></div>
+  <div id="contact-table" style="display:none;"></div>
 </div>
 
 <!-- CHECKLIST -->
@@ -668,6 +683,7 @@ let vendors   = [];
 let checklist = [];
 let customCats= [];
 let activeCatFilters=[];
+let contactView='cards';
 let eurRate=1.08;
 let _modalPayments=[];
 let _pdfBase64=null;
@@ -885,9 +901,26 @@ function confirmMoveCategory(){
 }
 
 // ── CONTACTS VIEW ─────────────────────────────────────────────────────────────
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function setContactView(v){
+  contactView=v;
+  document.getElementById('cv-cards-btn').classList.toggle('active',v==='cards');
+  document.getElementById('cv-table-btn').classList.toggle('active',v==='table');
+  renderContacts();
+}
 function renderContacts(){
   const grid=document.getElementById('contact-grid');
-  if(!vendors.length){grid.innerHTML='<div style="color:#bbb;font-size:13px;padding:24px;">No vendors yet. Click "+ Add vendor".</div>';return;}
+  const tbl=document.getElementById('contact-table');
+  const isTable=contactView==='table';
+  grid.style.display=isTable?'none':'grid';
+  tbl.style.display=isTable?'block':'none';
+  if(!vendors.length){
+    const empty='<div style="color:#bbb;font-size:13px;padding:24px;">No vendors yet. Click "+ Add vendor".</div>';
+    grid.innerHTML=empty;tbl.innerHTML=empty;return;
+  }
+  if(isTable)renderContactsTable(tbl);else renderContactsCards(grid);
+}
+function renderContactsCards(grid){
   grid.innerHTML=vendors.map((v,i)=>`
     <div class="contact-card">
       <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">
@@ -908,6 +941,32 @@ function renderContacts(){
         <button class="bsm bd" onclick="deleteVendor(${i})">Delete</button>
       </div>
     </div>`).join('');
+}
+function renderContactsTable(tbl){
+  tbl.innerHTML=`<div class="vtable-wrap"><table class="vtable"><thead><tr>
+    <th>Name</th><th>Category</th><th>Contact</th><th>Email</th><th>Phone</th><th>Website</th><th>Notes</th><th></th>
+  </tr></thead><tbody>`+vendors.map((v,i)=>`<tr>
+      <td style="font-weight:600;">${esc(v.name)}</td>
+      <td style="white-space:nowrap;">${catEmoji(v.category)} ${esc(v.category||'')}</td>
+      <td>${esc(v.contact||'')}</td>
+      <td>${v.email?`<a href="mailto:${esc(v.email)}" style="color:#1a73e8;">${esc(v.email)}</a>`:''}</td>
+      <td style="white-space:nowrap;">${v.phone?`<a href="tel:${esc(v.phone)}" style="color:#1a73e8;">${esc(v.phone)}</a>`:''}</td>
+      <td>${v.website?`<a href="${v.website.startsWith('http')?esc(v.website):'https://'+esc(v.website)}" target="_blank" style="color:#1a73e8;">${esc(v.website.replace(/^https?:\/\//,''))}</a>`:''}</td>
+      <td style="color:#888;max-width:240px;">${esc(v.notes||'')}</td>
+      <td style="white-space:nowrap;"><button class="bsm bs" onclick="openVendorModal(${i})">Edit</button> <button class="bsm bd" onclick="deleteVendor(${i})">Delete</button></td>
+    </tr>`).join('')+`</tbody></table></div>`;
+}
+function csvCell(s){s=String(s==null?'':s);return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
+function exportContactsCSV(){
+  if(!vendors.length){alert('No vendors to export.');return;}
+  const headers=['name','category','contact','email','phone','website','notes'];
+  const lines=[headers.join(',')];
+  vendors.forEach(v=>lines.push([v.name,v.category,v.contact,v.email,v.phone,v.website,v.notes].map(csvCell).join(',')));
+  const blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=(weddingCode||'wedding')+'-contacts.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);toast('CSV exported');
 }
 function deleteVendor(i){if(!confirm('Delete this vendor?'))return;vendors.splice(i,1);persist();renderContacts();renderBudget();toast('Deleted');}
 
