@@ -129,6 +129,29 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 .clt{font-size:13px;flex:1;}
 .clitems.collapsed{display:none;}
 
+/* checklist kanban board */
+.kb-wrap{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+@media(max-width:640px){.kb-wrap{grid-template-columns:1fr;}}
+.kb-col{background:#fff;border:1px solid #ede6de;border-radius:12px;padding:10px;min-height:120px;}
+.kb-col.drag-over{background:#fdf0eb;border-color:#8b5e52;}
+.kb-col-head{font-size:12px;font-weight:700;color:#8b5e52;text-transform:uppercase;letter-spacing:.4px;padding:4px 6px 10px;display:flex;justify-content:space-between;}
+.kb-card{background:#faf7f4;border:1px solid #ede6de;border-radius:8px;padding:9px 11px;margin-bottom:8px;cursor:grab;font-size:13px;}
+.kb-card:active{cursor:grabbing;}.kb-card.dragging{opacity:.4;}
+.kb-card.done{opacity:.6;}.kb-card.done .kb-card-title{text-decoration:line-through;color:#aaa;}
+.kb-card-meta{font-size:10px;color:#aaa;margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;}
+
+/* checklist calendar */
+.cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-dow{font-size:10px;font-weight:700;color:#aaa;text-transform:uppercase;text-align:center;padding:4px 0;}
+.cal-cell{background:#fff;border:1px solid #ede6de;border-radius:7px;min-height:80px;padding:4px 5px;overflow:hidden;}
+.cal-cell.empty{background:transparent;border:none;}
+.cal-cell.today{border-color:#8b5e52;box-shadow:0 0 0 1px #8b5e52 inset;}
+.cal-cell.wedding{background:#fdf0eb;border-color:#8b5e52;}
+.cal-daynum{font-size:11px;font-weight:700;color:#999;margin-bottom:2px;}
+.cal-task{background:#fdf0eb;color:#8b5e52;border-radius:4px;padding:2px 5px;margin-top:2px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cal-task.done{opacity:.5;text-decoration:line-through;}
+
 /* AI import */
 .drop-zone{border:2px dashed #d8cfc6;border-radius:8px;padding:14px;text-align:center;cursor:pointer;background:#faf7f4;font-size:12px;color:#aaa;}
 .drop-zone:hover{border-color:#8b5e52;background:#fdf8f5;}
@@ -291,7 +314,12 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
   </div>
   <div class="rh">
     <h2>Tasks <span id="cl-progress" style="font-size:12px;color:#999;font-weight:400;"></span></h2>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div class="vtoggle">
+        <button class="fchip active" id="clv-list-btn" onclick="setChecklistView('list')">☰ List</button>
+        <button class="fchip" id="clv-board-btn" onclick="setChecklistView('board')">▤ Board</button>
+        <button class="fchip" id="clv-cal-btn" onclick="setChecklistView('calendar')">▦ Calendar</button>
+      </div>
       <button class="btn bs bsm" onclick="openAddTaskModal()">+ Task</button>
       <button class="btn bs bsm" onclick="resetChecklist()">Reset</button>
     </div>
@@ -454,6 +482,7 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
     <h3>Add Task</h3>
     <div class="fg"><label>Section</label><select id="t-section"></select></div>
     <div class="fg"><label>Task</label><input type="text" id="t-text" placeholder="e.g. Book rehearsal dinner"></div>
+    <div class="fg"><label>Due date (optional)</label><input type="date" id="t-due"></div>
     <div class="mfoot"><button class="bcancel" onclick="closeModal('m-task')">Cancel</button><button class="btn bp" onclick="saveTask()">Add</button></div>
   </div>
 </div>
@@ -685,6 +714,9 @@ let checklist = [];
 let customCats= [];
 let activeCatFilters=[];
 let contactView='cards';
+let checklistView='list';   // 'list' | 'board' | 'calendar'
+let _calMonth=null;         // {y,m} shown in calendar view
+let _dragTask=null;         // {si,ii} being dragged on the board
 let eurRate=1.08;
 let _modalPayments=[];
 let _aiFiles=[]; // AI Import uploads: {name, kind:'pdf'|'docx', size, base64, text, status}
@@ -1071,34 +1103,121 @@ function sectionDateLabel(s){
   const d=new Date(wedding);d.setMonth(d.getMonth()-mo);
   return`${d.toLocaleDateString('en-US',{month:'short',year:'numeric'})} <span style="color:#bbb;font-weight:400;">(${mo===1?'1 month':mo+' months'} before)</span>`;
 }
-function toggleTask(si,ii){checklist[si].items[ii].done=!checklist[si].items[ii].done;persist();renderChecklist();}
+function toggleTask(si,ii){const it=checklist[si].items[ii];it.done=!it.done;it.status=it.done?'done':'todo';persist();renderChecklist();}
 function deleteTask(si,ii){checklist[si].items.splice(ii,1);if(!checklist[si].items.length)checklist.splice(si,1);persist();renderChecklist();}
+function setTaskDue(si,ii,val){const it=checklist[si].items[ii];if(!it)return;it.due=val||'';persist();renderChecklist();}
+function setTaskStatus(si,ii,status){const it=checklist[si].items[ii];if(!it)return;it.status=status;it.done=(status==='done');persist();renderChecklist();}
 function openAddTaskModal(){
   document.getElementById('t-section').innerHTML=checklist.map((s,i)=>`<option value="${i}">${s.label||s.month||'Section '+(i+1)}</option>`).join('');
   document.getElementById('t-text').value='';
+  document.getElementById('t-due').value='';
   document.getElementById('m-task').classList.add('open');
 }
-function saveTask(){const text=document.getElementById('t-text').value.trim();const si=parseInt(document.getElementById('t-section').value);if(!text){alert('Enter a task.');return;}checklist[si].items.push({text,done:false});persist();closeModal('m-task');renderChecklist();toast('Task added!');}
+function saveTask(){const text=document.getElementById('t-text').value.trim();const si=parseInt(document.getElementById('t-section').value);if(!text){alert('Enter a task.');return;}const due=document.getElementById('t-due').value;checklist[si].items.push({text,done:false,status:'todo',due:due||''});persist();closeModal('m-task');renderChecklist();toast('Task added!');}
 function resetChecklist(){if(!confirm('Reset?'))return;checklist=defaultChecklist();persist();renderChecklist();}
+
+// ── checklist: status + dates ───────────────────────────────────────────────
+function itemStatus(it){return it.status||(it.done?'done':'todo');}
+function derivedDue(s){ // auto-schedule from wedding date + section monthsOut
+  if(!settings.date||s.monthsOut==null)return null;
+  const w=new Date(settings.date+'T12:00:00');
+  if(s.monthsOut===0){const d=new Date(w);d.setDate(d.getDate()-7);return d;}
+  return new Date(w.getFullYear(),w.getMonth()-s.monthsOut,1,12,0,0);
+}
+function itemDueDate(s,it){return it.due?new Date(it.due+'T12:00:00'):derivedDue(s);}
+function fmtDueShort(d){return d?d.toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';}
+function fmtDueMonth(d){return d?d.toLocaleDateString('en-US',{month:'short',year:'numeric'}):'';}
+
+function setChecklistView(v){
+  checklistView=v;
+  document.getElementById('clv-list-btn').classList.toggle('active',v==='list');
+  document.getElementById('clv-board-btn').classList.toggle('active',v==='board');
+  document.getElementById('clv-cal-btn').classList.toggle('active',v==='calendar');
+  renderChecklist();
+}
 function renderChecklist(){
   let total=0,done=0;checklist.forEach(s=>s.items.forEach(it=>{total++;if(it.done)done++;}));
   document.getElementById('cl-progress').textContent=`${done} of ${total} done`;
-  document.getElementById('cl-container').innerHTML=checklist.map((s,si)=>`
+  const c=document.getElementById('cl-container');
+  if(checklistView==='board')c.innerHTML=renderBoard();
+  else if(checklistView==='calendar')c.innerHTML=renderCalendar();
+  else c.innerHTML=renderChecklistList();
+}
+function renderChecklistList(){
+  return checklist.map((s,si)=>`
     <div class="cls">
       <div class="clh" onclick="this.nextElementSibling.classList.toggle('collapsed')">
         <h3>${sectionDateLabel(s)} <span style="font-size:10px;color:#ccc;font-weight:400;margin-left:6px;">${s.items.filter(i=>i.done).length}/${s.items.length}</span></h3>
         <span style="font-size:11px;color:#ddd;">▾</span>
       </div>
       <div class="clitems">
-        ${s.items.map((it,ii)=>`
-          <div class="cli ${it.done?'done':''}" onclick="toggleTask(${si},${ii})">
+        ${s.items.map((it,ii)=>{
+          const eff=itemDueDate(s,it);
+          const hint=(!it.due&&eff)?`<span style="font-size:10px;color:#ccc;flex-shrink:0;">~ ${fmtDueMonth(eff)}</span>`:'';
+          return `<div class="cli ${it.done?'done':''}" onclick="toggleTask(${si},${ii})">
             <input type="checkbox" ${it.done?'checked':''} onclick="event.stopPropagation();toggleTask(${si},${ii})">
-            <span class="clt">${it.text}</span>
-            <button onclick="event.stopPropagation();deleteTask(${si},${ii})" style="background:none;border:none;color:#ddd;cursor:pointer;font-size:15px;padding:0 2px;line-height:1;">×</button>
-          </div>`).join('')}
+            <span class="clt">${esc(it.text)}</span>
+            ${hint}
+            <input type="date" value="${it.due||''}" onclick="event.stopPropagation()" onchange="event.stopPropagation();setTaskDue(${si},${ii},this.value)" title="Due date" style="font-size:11px;border:1px solid #ede6de;border-radius:5px;padding:2px 5px;color:#888;background:#fff;flex-shrink:0;">
+            <button onclick="event.stopPropagation();deleteTask(${si},${ii})" style="background:none;border:none;color:#ddd;cursor:pointer;font-size:15px;padding:0 2px;line-height:1;flex-shrink:0;">×</button>
+          </div>`;
+        }).join('')}
       </div>
     </div>`).join('');
 }
+function renderBoard(){
+  const cols=[{k:'todo',t:'To do'},{k:'doing',t:'In progress'},{k:'done',t:'Done'}];
+  const tasks=[];
+  checklist.forEach((s,si)=>s.items.forEach((it,ii)=>tasks.push({s,si,it,ii})));
+  return '<div class="kb-wrap">'+cols.map(col=>{
+    const cards=tasks.filter(t=>itemStatus(t.it)===col.k);
+    const body=cards.map(t=>{
+      const eff=itemDueDate(t.s,t.it);
+      return `<div class="kb-card ${t.it.done?'done':''}" draggable="true" ondragstart="startDragTask(${t.si},${t.ii},this)" ondragend="this.classList.remove('dragging')">
+        <div class="kb-card-title">${esc(t.it.text)}</div>
+        <div class="kb-card-meta"><span>${esc(t.s.label||t.s.month||'')}</span>${eff?`<span>📅 ${fmtDueShort(eff)}</span>`:''}</div>
+      </div>`;
+    }).join('')||'<div style="font-size:11px;color:#ccc;padding:8px 6px;">Drop tasks here</div>';
+    return `<div class="kb-col" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="event.preventDefault();this.classList.remove('drag-over');dropTask('${col.k}')">
+      <div class="kb-col-head"><span>${col.t}</span><span style="color:#ccc;">${cards.length}</span></div>
+      ${body}
+    </div>`;
+  }).join('')+'</div>';
+}
+function startDragTask(si,ii,el){_dragTask={si,ii};if(el)el.classList.add('dragging');}
+function dropTask(status){if(!_dragTask)return;const{si,ii}=_dragTask;_dragTask=null;setTaskStatus(si,ii,status);}
+function renderCalendar(){
+  if(!_calMonth){const base=settings.date?new Date(settings.date+'T12:00:00'):new Date();_calMonth={y:base.getFullYear(),m:base.getMonth()};}
+  const {y,m}=_calMonth;
+  const first=new Date(y,m,1),startDow=first.getDay(),daysInMonth=new Date(y,m+1,0).getDate();
+  const byDay={};
+  checklist.forEach(s=>s.items.forEach(it=>{
+    const d=itemDueDate(s,it);
+    if(d&&d.getFullYear()===y&&d.getMonth()===m){(byDay[d.getDate()]=byDay[d.getDate()]||[]).push(it);}
+  }));
+  const wed=settings.date?new Date(settings.date+'T12:00:00'):null,today=new Date();
+  const dows=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let cells='';
+  for(let i=0;i<startDow;i++)cells+='<div class="cal-cell empty"></div>';
+  for(let day=1;day<=daysInMonth;day++){
+    const isToday=today.getFullYear()===y&&today.getMonth()===m&&today.getDate()===day;
+    const isWed=wed&&wed.getFullYear()===y&&wed.getMonth()===m&&wed.getDate()===day;
+    const ts=byDay[day]||[];
+    cells+=`<div class="cal-cell${isToday?' today':''}${isWed?' wedding':''}">
+      <div class="cal-daynum">${day}${isWed?' 💍':''}</div>
+      ${ts.slice(0,4).map(it=>`<div class="cal-task ${it.done?'done':''}" title="${esc(it.text)}">${esc(it.text)}</div>`).join('')}
+      ${ts.length>4?`<div style="font-size:10px;color:#aaa;margin-top:2px;">+${ts.length-4} more</div>`:''}
+    </div>`;
+  }
+  return `<div class="cal-head">
+      <button class="btn bs bsm" onclick="calNav(-1)">←</button>
+      <div style="font-size:14px;font-weight:700;">${first.toLocaleDateString('en-US',{month:'long',year:'numeric'})}</div>
+      <button class="btn bs bsm" onclick="calNav(1)">→</button>
+    </div>
+    ${!settings.date?'<div style="font-size:12px;color:#d47c0f;margin-bottom:8px;">Set your wedding date in Settings so auto-scheduled tasks show on the calendar.</div>':''}
+    <div class="cal-grid">${dows.map(d=>`<div class="cal-dow">${d}</div>`).join('')}${cells}</div>`;
+}
+function calNav(delta){if(!_calMonth)return;let{y,m}=_calMonth;m+=delta;if(m<0){m=11;y--;}else if(m>11){m=0;y++;}_calMonth={y,m};renderChecklist();}
 async function generateChecklist(){
   const key=getKey();if(!key){alert('Add API key in Settings.');return;}
   const prompt=document.getElementById('cl-prompt').value.trim();if(!prompt){alert('Describe your wedding.');return;}
