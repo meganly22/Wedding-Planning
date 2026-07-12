@@ -394,7 +394,8 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
       <div style="font-size:12px;color:#888;margin-bottom:10px;">Add categories beyond the defaults.</div>
       <div id="custom-cat-list" style="margin-bottom:10px;"></div>
       <div style="display:flex;gap:8px;">
-        <input type="text" id="new-cat-input" placeholder="e.g. 🎂 Cake" style="flex:1;padding:8px 11px;border:1px solid #d8cfc6;border-radius:7px;font-size:13px;">
+        <input type="text" id="new-cat-emoji" placeholder="🏷" style="width:54px;text-align:center;padding:8px;border:1px solid #d8cfc6;border-radius:7px;font-size:13px;">
+        <input type="text" id="new-cat-input" placeholder="e.g. Cake" style="flex:1;padding:8px 11px;border:1px solid #d8cfc6;border-radius:7px;font-size:13px;">
         <button class="btn bp" onclick="addCustomCategory()">Add</button>
       </div>
     </div>
@@ -472,8 +473,11 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 <div class="mbg" id="m-category">
   <div class="mbox" style="max-width:340px;">
     <h3>Add category</h3>
-    <div class="fg"><label>Category name</label><input type="text" id="cat-input" placeholder="e.g. Cake, Rentals, Stationery"></div>
-    <div style="font-size:11px;color:#aaa;margin-top:-6px;">Appears everywhere you pick a category — add/edit vendor, move category, and the budget groups.</div>
+    <div class="fr" style="grid-template-columns:70px 1fr;">
+      <div class="fg"><label>Icon</label><input type="text" id="cat-emoji" placeholder="🏷" style="text-align:center;"></div>
+      <div class="fg"><label>Category name</label><input type="text" id="cat-input" placeholder="e.g. Cake, Rentals"></div>
+    </div>
+    <div style="font-size:11px;color:#aaa;margin-top:-6px;">Pick an emoji (optional) and a name. Appears everywhere you choose a category — add/edit vendor, move category, and the budget groups.</div>
     <div class="mfoot"><button class="bcancel" onclick="closeModal('m-category')">Cancel</button><button class="btn bp" onclick="saveNewCategory()">Add category</button></div>
   </div>
 </div>
@@ -785,7 +789,8 @@ async function persist(){
 }
 
 function getKey(){return localStorage.getItem('wp-apikey')||'';}
-function allCategories(){return [...DEFAULT_CATS,...customCats.map(c=>({name:c,emoji:'🏷'}))];}
+function catObj(c){return typeof c==='string'?{name:c,emoji:'🏷'}:{name:c.name||'',emoji:c.emoji||'🏷'};}
+function allCategories(){return [...DEFAULT_CATS,...customCats.map(catObj)];}
 function catEmoji(n){const c=allCategories().find(c=>c.name===n);return c?c.emoji:'📦';}
 
 // ── CURRENCY ──────────────────────────────────────────────────────────────────
@@ -950,19 +955,21 @@ function confirmMoveCategory(){
 // ── ADD CATEGORY (from Budget / Contacts) ──────────────────────────────────────
 function openCategoryModal(){
   document.getElementById('cat-input').value='';
+  document.getElementById('cat-emoji').value='';
   document.getElementById('m-category').classList.add('open');
-  setTimeout(()=>document.getElementById('cat-input').focus(),50);
+  setTimeout(()=>document.getElementById('cat-emoji').focus(),50);
 }
 function saveNewCategory(){
-  const val=document.getElementById('cat-input').value.trim();
-  if(!val)return;
-  if(customCats.includes(val)||DEFAULT_CATS.find(c=>c.name===val)){alert('That category already exists.');return;}
-  customCats.push(val);
+  const name=document.getElementById('cat-input').value.trim();
+  if(!name)return;
+  const emoji=document.getElementById('cat-emoji').value.trim()||'🏷';
+  if(allCategories().some(c=>c.name===name)){alert('That category already exists.');return;}
+  customCats.push({name,emoji});
   persist();
   closeModal('m-category');
   renderBudget();renderContacts();
   if(document.getElementById('page-settings').classList.contains('active'))renderCustomCatList();
-  toast('Category added!');
+  toast(`Category "${name}" added — pick it when adding or editing a vendor.`);
 }
 
 // ── CONTACTS VIEW ─────────────────────────────────────────────────────────────
@@ -1662,16 +1669,19 @@ function saveKey(){
   toast('API key saved!');
 }
 function addCustomCategory(){
-  const val=document.getElementById('new-cat-input').value.trim();if(!val)return;
-  if(customCats.includes(val)||DEFAULT_CATS.find(c=>c.name===val)){alert('Already exists.');return;}
-  customCats.push(val);document.getElementById('new-cat-input').value='';
-  persist();renderCustomCatList();toast('Category added!');
+  const name=document.getElementById('new-cat-input').value.trim();if(!name)return;
+  const emoji=document.getElementById('new-cat-emoji').value.trim()||'🏷';
+  if(allCategories().some(c=>c.name===name)){alert('Already exists.');return;}
+  customCats.push({name,emoji});
+  document.getElementById('new-cat-input').value='';document.getElementById('new-cat-emoji').value='';
+  persist();renderCustomCatList();renderBudget();renderContacts();toast('Category added!');
 }
-function removeCustomCategory(name){customCats=customCats.filter(c=>c!==name);persist();renderCustomCatList();}
+function removeCustomCategoryAt(i){customCats.splice(i,1);persist();renderCustomCatList();renderBudget();renderContacts();}
 function renderCustomCatList(){
   const el=document.getElementById('custom-cat-list');
+  if(!el)return;
   if(!customCats.length){el.innerHTML='<div style="font-size:12px;color:#bbb;">No custom categories yet.</div>';return;}
-  el.innerHTML=customCats.map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px solid #f5f0ec;"><span>${c}</span><button onclick="removeCustomCategory('${c}')" class="bsm bd" style="padding:2px 8px;">Remove</button></div>`).join('');
+  el.innerHTML=customCats.map((c,i)=>{const o=catObj(c);return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px solid #f5f0ec;"><span>${o.emoji} ${esc(o.name)}</span><button onclick="removeCustomCategoryAt(${i})" class="bsm bd" style="padding:2px 8px;">Remove</button></div>`;}).join('');
 }
 function clearAll(){if(!confirm('Clear ALL data? This cannot be undone.'))return;localStorage.removeItem('wp-role');localStorage.removeItem('wp-onboarded');localStorage.removeItem('wp-apikey');location.reload();}
 function updateTitle(){const names=[settings.p1,settings.p2].filter(Boolean).join(' & ');document.getElementById('nav-title').textContent='💍 '+(names||'Wedding Planner');document.getElementById('nav-title').title=weddingCode?'Code: '+weddingCode:'';}
