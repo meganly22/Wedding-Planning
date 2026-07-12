@@ -82,6 +82,10 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 .vtable td{padding:10px 12px;border-bottom:1px solid #f5f0ec;vertical-align:top;}
 .vtable tr:last-child td{border-bottom:none;}
 .vtable tbody tr:hover td{background:#fdf9f7;}
+.emoji-grid{display:flex;flex-wrap:wrap;gap:5px;}
+.emoji-opt{width:34px;height:34px;border:1px solid #ede6de;background:#fff;border-radius:8px;font-size:17px;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;}
+.emoji-opt:hover{border-color:#8b5e52;background:#fdf8f5;}
+.emoji-opt.sel{border-color:#8b5e52;background:#fdf0eb;box-shadow:0 0 0 1px #8b5e52 inset;}
 
 /* modals */
 .mbg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:center;justify-content:center;}
@@ -393,8 +397,9 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
       <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Custom categories</div>
       <div style="font-size:12px;color:#888;margin-bottom:10px;">Add categories beyond the defaults.</div>
       <div id="custom-cat-list" style="margin-bottom:10px;"></div>
+      <div class="emoji-grid" id="new-cat-emoji-picker" style="margin-bottom:8px;"></div>
       <div style="display:flex;gap:8px;">
-        <input type="text" id="new-cat-emoji" placeholder="🏷" style="width:54px;text-align:center;padding:8px;border:1px solid #d8cfc6;border-radius:7px;font-size:13px;">
+        <input type="hidden" id="new-cat-emoji">
         <input type="text" id="new-cat-input" placeholder="e.g. Cake" style="flex:1;padding:8px 11px;border:1px solid #d8cfc6;border-radius:7px;font-size:13px;">
         <button class="btn bp" onclick="addCustomCategory()">Add</button>
       </div>
@@ -473,11 +478,12 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 <div class="mbg" id="m-category">
   <div class="mbox" style="max-width:340px;">
     <h3>Add category</h3>
-    <div class="fr" style="grid-template-columns:70px 1fr;">
-      <div class="fg"><label>Icon</label><input type="text" id="cat-emoji" placeholder="🏷" style="text-align:center;"></div>
-      <div class="fg"><label>Category name</label><input type="text" id="cat-input" placeholder="e.g. Cake, Rentals"></div>
+    <div class="fg"><label>Icon</label>
+      <div class="emoji-grid" id="cat-emoji-picker"></div>
+      <input type="hidden" id="cat-emoji">
     </div>
-    <div style="font-size:11px;color:#aaa;margin-top:-6px;">Pick an emoji (optional) and a name. Appears everywhere you choose a category — add/edit vendor, move category, and the budget groups.</div>
+    <div class="fg"><label>Category name</label><input type="text" id="cat-input" placeholder="e.g. Cake, Rentals"></div>
+    <div style="font-size:11px;color:#aaa;margin-top:-6px;">Pick an icon and a name. Appears everywhere you choose a category — add/edit vendor, move category, and the budget groups.</div>
     <div class="mfoot"><button class="bcancel" onclick="closeModal('m-category')">Cancel</button><button class="btn bp" onclick="saveNewCategory()">Add category</button></div>
   </div>
 </div>
@@ -584,6 +590,8 @@ const DEFAULT_CATS=[
   {name:'Hair & Makeup',emoji:'💄'},{name:'Invitations',emoji:'✉️'},{name:'Transport',emoji:'🚗'},
   {name:'Honeymoon',emoji:'✈️'},{name:'Other',emoji:'📦'}
 ];
+// wedding-related icons for custom categories
+const CAT_EMOJIS=['🏷','💒','🏛','🍽','📷','🎥','💐','🎵','🎸','👗','🤵','💄','💇','✉️','🚗','✈️','🎂','💍','🥂','🎉','🎁','🕯','🪑','📝'];
 
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
 
@@ -953,11 +961,22 @@ function confirmMoveCategory(){
 }
 
 // ── ADD CATEGORY (from Budget / Contacts) ──────────────────────────────────────
+function renderEmojiPicker(gridId,inputId){
+  const grid=document.getElementById(gridId);if(!grid)return;
+  const cur=document.getElementById(inputId).value||'🏷';
+  grid.innerHTML=CAT_EMOJIS.map(e=>`<button type="button" class="emoji-opt${e===cur?' sel':''}" onclick="pickEmoji('${inputId}','${e}',this)">${e}</button>`).join('');
+}
+function pickEmoji(inputId,emoji,btn){
+  document.getElementById(inputId).value=emoji;
+  btn.parentElement.querySelectorAll('.emoji-opt').forEach(b=>b.classList.remove('sel'));
+  btn.classList.add('sel');
+}
 function openCategoryModal(){
   document.getElementById('cat-input').value='';
-  document.getElementById('cat-emoji').value='';
+  document.getElementById('cat-emoji').value='🏷';
+  renderEmojiPicker('cat-emoji-picker','cat-emoji');
   document.getElementById('m-category').classList.add('open');
-  setTimeout(()=>document.getElementById('cat-emoji').focus(),50);
+  setTimeout(()=>document.getElementById('cat-input').focus(),50);
 }
 function saveNewCategory(){
   const name=document.getElementById('cat-input').value.trim();
@@ -1643,6 +1662,8 @@ function loadSettings(){
   document.getElementById('st-budget').value=settings.budget||'';
   document.getElementById('st-currency').value=settings.currency||'USD';
   renderCustomCatList();
+  document.getElementById('new-cat-emoji').value='🏷';
+  renderEmojiPicker('new-cat-emoji-picker','new-cat-emoji');
   const ks=document.getElementById('st-key-ok');
   if(getKey()){ks.style.display='block';ks.textContent='✓ API key saved.';}else ks.style.display='none';
   // hide password card for viewers
@@ -1673,7 +1694,9 @@ function addCustomCategory(){
   const emoji=document.getElementById('new-cat-emoji').value.trim()||'🏷';
   if(allCategories().some(c=>c.name===name)){alert('Already exists.');return;}
   customCats.push({name,emoji});
-  document.getElementById('new-cat-input').value='';document.getElementById('new-cat-emoji').value='';
+  document.getElementById('new-cat-input').value='';
+  document.getElementById('new-cat-emoji').value='🏷';
+  renderEmojiPicker('new-cat-emoji-picker','new-cat-emoji');
   persist();renderCustomCatList();renderBudget();renderContacts();toast('Category added!');
 }
 function removeCustomCategoryAt(i){customCats.splice(i,1);persist();renderCustomCatList();renderBudget();renderContacts();}
