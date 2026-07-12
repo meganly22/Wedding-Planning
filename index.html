@@ -153,6 +153,7 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
 </style>
   <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-app-compat.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-firestore-compat.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.9.0/mammoth.browser.min.js"></script>
   <script>
   const firebaseConfig = {
     apiKey: "AIzaSyBnwwIVBcPwpmkIB3mo4kBBWYb8ukGOZFo",
@@ -308,21 +309,21 @@ nav h1{font-size:16px;font-weight:700;color:#8b5e52;padding:14px 0;margin-right:
       <textarea id="ai-input" rows="5" placeholder="Paste vendor emails, spreadsheet rows, invoice text..." style="width:100%;padding:9px 11px;border:1px solid #d8cfc6;border-radius:7px;font-size:13px;font-family:inherit;resize:vertical;line-height:1.6;"></textarea>
     </div>
     <div style="margin-bottom:12px;">
-      <div style="font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">PDF contract (optional)</div>
+      <div style="font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;">Contracts — PDF or Word (optional, multiple)</div>
       <div class="drop-zone" id="pdf-drop"
            onclick="document.getElementById('pdf-file-input').click()"
            ondragover="event.preventDefault();this.classList.add('drag-over')"
            ondragleave="this.classList.remove('drag-over')"
-           ondrop="event.preventDefault();this.classList.remove('drag-over');handlePDFDrop(event)">
-        📎 Click or drag &amp; drop a PDF contract here
-        <input type="file" id="pdf-file-input" accept=".pdf" style="display:none;" onchange="handlePDF(event)">
+           ondrop="event.preventDefault();this.classList.remove('drag-over');handleFileDrop(event)">
+        📎 Click or drag &amp; drop PDF or .docx files here
+        <input type="file" id="pdf-file-input" accept=".pdf,.docx" multiple style="display:none;" onchange="handleFiles(event)">
       </div>
-      <div id="pdf-status"></div>
+      <div id="ai-file-list" style="margin-top:8px;"></div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button class="btn bp" id="ai-btn" onclick="runExtract()">✦ Extract</button>
       <span id="ai-loading" style="font-size:12px;color:#aaa;display:none;">Extracting...</span>
-      <button class="btn bs" id="ai-clear-btn" onclick="clearPDF()" style="display:none;font-size:12px;">✕ Clear PDF</button>
+      <button class="btn bs" id="ai-clear-btn" onclick="clearAllFiles()" style="display:none;font-size:12px;">✕ Clear files</button>
     </div>
   </div>
   <div id="ai-results"></div>
@@ -686,8 +687,7 @@ let activeCatFilters=[];
 let contactView='cards';
 let eurRate=1.08;
 let _modalPayments=[];
-let _pdfBase64=null;
-let _pdfName='';
+let _aiFiles=[]; // AI Import uploads: {name, kind:'pdf'|'docx', size, base64, text, status}
 let _moveCatIdx=-1;
 let _extractedItems=[];
 let _unsubscribers = []; // Firestore listeners
@@ -1114,59 +1114,92 @@ async function generateChecklist(){
   finally{document.getElementById('cl-btn').disabled=false;document.getElementById('cl-loading').style.display='none';}
 }
 
-// ── PDF ────────────────────────────────────────────────────────────────────────
-function handlePDFDrop(event){
-  const file = event.dataTransfer.files[0];
-  if (!file) return;
-  if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
-    alert('Please drop a PDF file.'); return;
-  }
-  processPDFFile(file);
+// ── AI IMPORT FILES (PDF + .docx, bulk) ─────────────────────────────────────────
+function handleFileDrop(event){
+  const files=[...event.dataTransfer.files];
+  if(files.length) addAiFiles(files);
 }
-function handlePDF(event){
-  const file = event.target.files[0];
-  if (!file) return;
-  processPDFFile(file);
+function handleFiles(event){
+  const files=[...event.target.files];
+  if(files.length) addAiFiles(files);
+  event.target.value=''; // allow re-selecting the same file
 }
-function processPDFFile(file){
-  if(file.size>3*1024*1024){alert('PDF is over 3MB — please compress it first (try smallpdf.com). Large files may exceed browser storage limits.');return;}
-  const reader=new FileReader();
-  reader.onload=e=>{
-    _pdfBase64=e.target.result.split(',')[1];_pdfName=file.name;
-    const drop=document.getElementById('pdf-drop');
-    drop.classList.add('has-file');
-    drop.innerHTML=`📄 <strong>${file.name}</strong> <span style="color:#aaa;">(${(file.size/1024).toFixed(0)} KB)</span>`;
-    document.getElementById('ai-clear-btn').style.display='inline-block';
-  };
-  reader.readAsDataURL(file);
+function addAiFiles(files){
+  files.forEach(file=>{
+    const lower=file.name.toLowerCase();
+    const isPdf=file.type.includes('pdf')||lower.endsWith('.pdf');
+    const isDocx=lower.endsWith('.docx');
+    if(!isPdf&&!isDocx){alert(`"${file.name}" is not a PDF or .docx — skipped.`);return;}
+    if(isPdf&&file.size>3*1024*1024){alert(`"${file.name}" is over 3MB — compress it first (try smallpdf.com), then re-add.`);return;}
+    const entry={name:file.name,kind:isPdf?'pdf':'docx',size:file.size,base64:null,text:null,status:'reading'};
+    _aiFiles.push(entry);
+    renderAiFileList();
+    if(isPdf){
+      const reader=new FileReader();
+      reader.onload=e=>{entry.base64=e.target.result.split(',')[1];entry.status='ready';renderAiFileList();};
+      reader.onerror=()=>{entry.status='error';renderAiFileList();};
+      reader.readAsDataURL(file);
+    } else {
+      if(typeof mammoth==='undefined'){entry.status='error';renderAiFileList();return;}
+      file.arrayBuffer()
+        .then(buf=>mammoth.extractRawText({arrayBuffer:buf}))
+        .then(res=>{entry.text=(res.value||'').trim();entry.status=entry.text?'ready':'empty';renderAiFileList();})
+        .catch(()=>{entry.status='error';renderAiFileList();});
+    }
+  });
 }
-function clearPDF(){
-  _pdfBase64=null;_pdfName='';
-  const drop=document.getElementById('pdf-drop');
-  drop.classList.remove('has-file');
-  drop.innerHTML='📎 Click to attach a PDF contract<input type="file" id="pdf-file-input" accept=".pdf" style="display:none;" onchange="handlePDF(event)">';
-  drop.onclick=()=>document.getElementById('pdf-file-input').click();
-  document.getElementById('ai-clear-btn').style.display='none';
+function renderAiFileList(){
+  const el=document.getElementById('ai-file-list');
+  if(!el)return;
+  if(!_aiFiles.length){el.innerHTML='';document.getElementById('ai-clear-btn').style.display='none';return;}
+  document.getElementById('ai-clear-btn').style.display='inline-block';
+  const badge={ready:'<span style="color:#2d7a4f;">ready</span>',reading:'<span style="color:#aaa;">reading…</span>',empty:'<span style="color:#d47c0f;">no text found</span>',error:'<span style="color:#c0392b;">error</span>'};
+  el.innerHTML=_aiFiles.map((f,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#faf7f4;border:1px solid #ede6de;border-radius:7px;margin-bottom:5px;font-size:12px;">
+      <span>${f.kind==='pdf'?'📄':'📝'}</span>
+      <span style="flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(f.name)}</span>
+      <span style="color:#aaa;flex-shrink:0;">${(f.size/1024).toFixed(0)} KB</span>
+      <span style="flex-shrink:0;">${badge[f.status]||''}</span>
+      <button onclick="removeAiFile(${i})" style="background:none;border:none;color:#ddd;cursor:pointer;font-size:15px;line-height:1;padding:0 2px;flex-shrink:0;">×</button>
+    </div>`).join('');
+}
+function removeAiFile(i){_aiFiles.splice(i,1);renderAiFileList();}
+function clearAllFiles(){_aiFiles=[];renderAiFileList();}
+// PDF that a given extracted item came from (matched by sourceFile), for attaching as contractPDF
+function pdfForItem(d){
+  if(!d||!d.sourceFile)return null;
+  const f=_aiFiles.find(x=>x.kind==='pdf'&&x.base64&&x.name===d.sourceFile);
+  return f?{name:f.name,data:f.base64}:null;
 }
 
 // ── AI IMPORT ─────────────────────────────────────────────────────────────────
 async function runExtract(){
   const key=getKey();if(!key){alert('Add API key in Settings.');return;}
   const text=document.getElementById('ai-input').value.trim();
-  if(!text&&!_pdfBase64){alert('Paste some text or attach a PDF.');return;}
+  if(_aiFiles.some(f=>f.status==='reading')){alert('Some files are still processing — wait a moment and try again.');return;}
+  const ready=_aiFiles.filter(f=>f.status==='ready');
+  if(!text&&!ready.length){alert('Paste some text or attach a PDF/Word file.');return;}
   document.getElementById('ai-btn').disabled=true;
   document.getElementById('ai-loading').style.display='inline';
   document.getElementById('ai-results').innerHTML='';
 
-  const sys=`You are a wedding expense extractor. Extract ALL vendor/expense items from the input (text and/or PDF). Return ONLY a raw JSON array starting with [.
-Each object: {"name":"descriptive name","category":"Venue|Catering|Photography|Flowers|Music / DJ|Attire|Hair & Makeup|Invitations|Transport|Honeymoon|Other","contact":"contact person name or empty","email":"email or empty","phone":"phone or empty","currency":"USD or EUR","contractAmount":number,"paid":number,"status":"paid|partial|unpaid","scheduledPayments":[{"date":"YYYY-MM-DD or empty","amount":number,"notes":"e.g. final balance"}],"notes":"context"}
+  const multi = ready.length>1 || (ready.length>=1 && !!text);
+  const sys=`You are a wedding expense extractor. Extract ALL vendor/expense items from the input (pasted text, PDF contracts, and Word documents). Return ONLY a raw JSON array starting with [.
+Each object: {"name":"descriptive name","category":"Venue|Catering|Photography|Flowers|Music / DJ|Attire|Hair & Makeup|Invitations|Transport|Honeymoon|Other","contact":"contact person name or empty","email":"email or empty","phone":"phone or empty","currency":"USD or EUR","contractAmount":number,"paid":number,"status":"paid|partial|unpaid","scheduledPayments":[{"date":"YYYY-MM-DD or empty","amount":number,"notes":"e.g. final balance"}],"notes":"context","sourceFile":"the document filename this item came from, or empty for pasted text"}
 For raw spreadsheet rows (no delimiters), pattern is: Date ItemName Price Currency Notes. Skip header rows.`;
 
   try{
-    const userContent=_pdfBase64
-      ?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:_pdfBase64}},{type:'text',text:text||'Extract all vendor and payment information from this contract.'}]
-      :text;
-    const raw=await callClaude(sys,userContent,4000);
+    const content=[];
+    ready.forEach(f=>{
+      if(f.kind==='pdf') content.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:f.base64}});
+      else content.push({type:'text',text:`=== Word document: ${f.name} ===\n${f.text}`});
+    });
+    if(text) content.push({type:'text',text:`=== Pasted text ===\n${text}`});
+    content.push({type:'text',text:multi
+      ?'Extract all vendor and payment information from every document and pasted text above. Set each item\'s sourceFile to the filename it came from.'
+      :'Extract all vendor and payment information above.'});
+    const maxTok=Math.min(8000, 4000 + ready.length*1200);
+    const raw=await callClaude(sys,content,maxTok);
     let json=raw.trim().replace(/^```json\s*/i,'').replace(/^```\s*/i,'').replace(/\s*```$/,'').trim();
     const m=json.match(/\[[\s\S]*\]/);if(m)json=m[0];
     let items;
@@ -1277,9 +1310,10 @@ function openExtractEditor(i){
 
   renderExPayments();
 
-  // PDF note
+  // PDF note — matched by the item's sourceFile
   const pdfNote=document.getElementById('ex-contract-note');
-  if(_pdfBase64){pdfNote.style.display='block';pdfNote.innerHTML=`📄 PDF contract (<strong>${_pdfName}</strong>) will be saved with this vendor.`;}
+  const srcPdf=pdfForItem(d);
+  if(srcPdf){pdfNote.style.display='block';pdfNote.innerHTML=`📄 PDF contract (<strong>${esc(srcPdf.name)}</strong>) will be saved with this vendor.`;}
   else pdfNote.style.display='none';
 
   document.getElementById('m-extract').classList.add('open');
@@ -1359,7 +1393,7 @@ function saveExtractedVendor(){
     currency:document.getElementById('ex-cur').value,
     notes:document.getElementById('ex-notes').value.trim(),
     payments,
-    contractPDF:_pdfBase64?{name:_pdfName,data:_pdfBase64}:null
+    contractPDF:pdfForItem(_extractedItems[i])
   };
   vendors.push(vendor);
   persist();
@@ -1371,7 +1405,7 @@ function saveExtractedVendor(){
 
 function quickSaveExtracted(i){
   const d=_extractedItems[i];
-  vendors.push(aiToVendor(d,_pdfBase64?{name:_pdfName,data:_pdfBase64}:null));
+  vendors.push(aiToVendor(d,pdfForItem(d)));
   persist();
   const btns=document.getElementById('ei-btns-'+i);
   if(btns)btns.innerHTML='<span style="color:#2d7a4f;font-size:12px;font-weight:700;">✓ Saved</span>';
@@ -1380,7 +1414,7 @@ function quickSaveExtracted(i){
 
 function saveAllExtracted(){
   _extractedItems.forEach((d,i)=>{
-    vendors.push(aiToVendor(d,null));
+    vendors.push(aiToVendor(d,pdfForItem(d)));
     const btns=document.getElementById('ei-btns-'+i);
     if(btns)btns.innerHTML='<span style="color:#2d7a4f;font-size:12px;font-weight:700;">✓ Saved</span>';
   });
